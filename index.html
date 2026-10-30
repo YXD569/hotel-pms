@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>云澜 PMS · 酒店管理系统</title>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
+  <noscript>本系统需要启用 JavaScript 才能运行。</noscript>
+
+  <!-- 依赖顺序：工具 → 数据 → 服务 → 框架 → 页面 → 启动 -->
+  <script src="js/utils.js"></script>
+  <script src="js/mock/seed.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/mock/api.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/components.js"></script>
+  <script src="js/router.js"></script>
+  <script src="js/pages/login.js"></script>
+  <script src="js/pages/dashboard.js"></script>
+  <script src="js/pages/rooms.js"></script>
+  <script src="js/pages/bookings.js"></script>
+  <script src="js/pages/reception.js"></script>
+  <script src="js/pages/guests.js"></script>
+  <script src="js/pages/housekeeping.js"></script>
+  <script src="js/pages/billing.js"></script>
+  <script src="js/pages/reports.js"></script>
+  <script src="js/pages/settings.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

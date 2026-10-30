@@ -1,0 +1,54 @@
+/* ============================================================
+   云澜大酒店 PMS · 设计 Token
+   视觉主张：酒店大堂的木饰与金属 —— 雪松绿 × 黄铜 × 亚麻纸面
+   ============================================================ */
+:root {
+  /* 基础色 */
+  --ink: #212B26;            /* 主文字 */
+  --ink-2: #5A665E;          /* 次级文字 */
+  --ink-3: #8A948C;          /* 弱化文字 */
+  --paper: #EEF0EA;          /* 页面底色（鼠尾草亚麻） */
+  --card: #FFFFFF;           /* 卡片面 */
+  --line: #D8DCD0;           /* 分隔线 */
+  --line-soft: #E7EAE2;
+
+  /* 品牌色 */
+  --pine: #1E4D3C;           /* 雪松绿：导航、主按钮 */
+  --pine-deep: #163B2E;
+  --pine-tint: #E3EBE5;
+  --brass: #A87B2F;          /* 黄铜：品牌、激活标记 */
+  --brass-deep: #8A6423;
+  --brass-tint: #F4EBDA;
+
+  /* 房态语义色（芯片底色，配白字） */
+  --st-ok: #4C8A5F;          /* 空净 */
+  --st-vd: #A66A1E;          /* 空脏 */
+  --st-oc: #3D6E9E;          /* 在住 */
+  --st-oo: #B14C3E;          /* 停用/维修 */
+  --st-rv: #7C5FA0;          /* 预抵 */
+
+  /* 功能色 */
+  --danger: #B14C3E;
+  --danger-tint: #F7E8E5;
+  --success: #3E7C55;
+  --success-tint: #E6F0E9;
+  --info: #3D6E9E;
+  --info-tint: #E7EEF5;
+  --warn: #A66A1E;
+  --warn-tint: #F7EEDD;
+
+  /* 字体 */
+  --font-body: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Noto Serif SC", "Source Han Serif SC", "STSong", "SimSun", serif;
+
+  /* 尺寸与层级 */
+  --sidebar-w: 232px;
+  --topbar-h: 60px;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow-pop: 0 8px 32px rgba(30, 42, 35, .16);
+  --shadow-card: 0 1px 2px rgba(30, 42, 35, .05);
+
+  /* 动效 */
+  --ease: cubic-bezier(.2, .7, .3, 1);
+}

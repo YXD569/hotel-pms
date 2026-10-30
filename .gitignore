@@ -1,0 +1,9 @@
+# ===== 临时测试桩（非项目产物，不纳入版本库）=====
+*.dump.html
+_rt_*.html
+_shots/
+
+# ===== 系统 / 编辑器 =====
+.DS_Store
+Thumbs.db
+desktop.ini
