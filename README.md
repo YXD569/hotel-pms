@@ -66,7 +66,7 @@ hotel-pms/
 │   │   └── seed.py          演示数据种子（36 间房 / 4 房型 / 员工 / 客人 / 预订 / 账务 / 任务 / 14 天趋势）
 │   ├── requirements.txt      fastapi / uvicorn / sqlalchemy / pymysql / pyjwt / bcrypt …
 │   ├── .env.example          环境变量示例（.env 已被忽略，不进仓库）
-│   └── test_api.py           后端 E2E 测试（54 条断言，FastAPI TestClient，可空库直接运行）
+│   └── test_api.py           后端 E2E 测试（70 条断言，FastAPI TestClient，可空库直接运行）
 ├── .vscode/                  VS Code 一键运行配置
 │   ├── launch.json           F5：启动后端（可断点）/ 跑后端测试
 │   ├── tasks.json            Ctrl+Shift+B 热重载启动；环境初始化 / 跑测试任务
@@ -86,9 +86,9 @@ hotel-pms/
 
 | 想跑什么 | 操作 |
 |---|---|
-| **后端 54 条断言**（空库可直接跑） | `Ctrl+Shift+P` → `Tasks: Run Task` → 「跑后端测试」；或 F5 选「后端测试 test_api.py」 |
+| **后端 70 条断言**（空库可直接跑） | `Ctrl+Shift+P` → `Tasks: Run Task` → 「跑后端测试」；或 F5 选「后端测试 test_api.py」 |
 | **前端 API 冒烟（16 项，需服务已启动）** | `Tasks: Run Task` → 「跑前端 API 冒烟测试」（默认打 `http://127.0.0.1:8000`，需本机装有 Node 18+） |
-| **前端数据层单测（21 项，不起服务也行）** | `Tasks: Run Task` → 「跑前端数据层单测」（数据层 14 项 + 启动自检 7 项） |
+| **前端数据层单测（22 项，不起服务也行）** | `Tasks: Run Task` → 「跑前端数据层单测」（数据层 15 项 + 启动自检 7 项） |
 
 ### B. 命令行启动（后端会一并托管前端）
 
@@ -147,12 +147,14 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 |---|---|---|
 | `DATABASE_URL` | 数据库连接串；Railway 旧版 / 手动填 | 本地默认 SQLite；`mysql://` 会被转成 `mysql+pymysql://` |
 | `MYSQL_URL` | Railway 新版 MySQL 插件注入，自动使用 | 无需手填 |
-| `JWT_SECRET` | HS256 签名密钥（≥ 32 字节） | 生产务必覆盖 |
+| `JWT_SECRET` | HS256 签名密钥（≥ 32 字节） | 生产**必须**覆盖：仍是默认值或不足 32 字节时，生产环境直接拒绝启动 |
 | `JWT_ALGORITHM` | JWT 算法 | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Token 有效期（分钟） | `480`（8 小时） |
-| `FRONTEND_DIR` | 前端静态目录（容器内路径） | Docker 内为 `/frontend` |
+| `FRONTEND_DIR` | 前端静态目录（容器内路径） | Docker 内为 `/frontend`；仅托管 `index.html` + `css/` + `js/` 白名单，不暴露同目录其他文件 |
 | `CORS_ORIGINS` | 跨域来源（同源部署可留默认） | 本地 `localhost` 调试用 |
 | `PORT` | 监听端口（Railway 自动注入） | `8000` |
+| `HOST` | 监听地址（仅 `python app/main.py` 直接启动时生效） | `127.0.0.1`；需局域网访问时显式设 `0.0.0.0` |
+| `ENV` | 运行环境 `development` / `production` | 留空按 Railway / Render / Fly 标记自动判断；`production` 下启用密钥强校验并隐藏演示账号 |
 
 ## 关键业务规则（改动前请先确认）
 
@@ -170,6 +172,9 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 | 金额边界 | 单笔金额 1 ~ 9,999,999 元、数量 1 ~ 99；超范围返回 400 而不是把数据库打成 500 |
 | 枚举校验 | 任务类型（cleaning/maintenance）、任务状态（pending/doing/done）、员工角色（5 种）、渠道来源、会员等级、房型代码、房间号必须在合法集合内，否则 400 |
 | 字段长度 | 姓名 ≤ 64、手机号 ≤ 32、备注 ≤ 500、账单条目名 ≤ 128 字符；超长直接 400（SQLite 不校验长度，换 MySQL 严格模式会直接报错） |
+| 出租率口径 | 总览、房态、报表统一按「在住 ÷ 可售房（总房数 − 停用房）」计算，停用维修房不计入分母 |
+| 房型一致性 | 订单排房必须与房间实体房型一致（服务层在入住时拦截；种子数据在写入前自检，不一致直接报错） |
+| 状态快照裁剪 | `/api/state` 按登录角色裁剪：无 `billing.view` 不返回账单、无 `guests.view` 不返回客人档案、无 `settings.view` 不返回员工手机号 |
 
 ## 已知边界
 
@@ -178,4 +183,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 - 报表的 14 天趋势为种子历史数据；实时数据（订单/账务/房态）由数据库实时计算。
 - 团队订单、夜审、多币种、分店多物业等企业级深度功能未展开，模块结构已预留扩展位。
 - 演示数据含固定账号（manager / front / housekeeping / finance / admin，密码 `123456`），生产请重置员工账户并更换 `JWT_SECRET`。
-- `GET /api/state` 是一次性全量快照（含在住客人手机号），酒店内网单店场景够用；要做多店/外网暴露，应改为按模块分页拉取并做字段级脱敏。
+- `GET /api/state` 仍是一次性全量快照（已按角色裁剪字段），单店内网场景够用；要做多店/外网暴露，应改为按模块分页拉取。
+- 令牌存在 `sessionStorage`（关标签页即失效、不跨标签共享）；仍有 XSS 可读风险，未引入 httpOnly Cookie 双令牌。
+- 登录接口未做失败次数限流，公网暴露前应加（网关层或应用层）。
+- 无 Refresh Token，`ACCESS_TOKEN_EXPIRE_MINUTES` 到期后需重新登录。

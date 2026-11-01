@@ -36,7 +36,7 @@
               '<div class="form-err" id="lgErr"></div>' +
             '</div>' +
             '<button class="btn btn-primary" id="lgSubmit">登 录</button>' +
-            '<div class="demo-accounts">' +
+            '<div class="demo-accounts" id="lgDemo">' +
               '<div class="da-title">演示账号（密码均为 123456，点击填入）</div>' +
               '<div class="da-chips">' +
                 DEMO.map(function (d) {
@@ -91,6 +91,19 @@
       });
     });
     accInput.focus();
+
+    /* 生产环境（后端 /api/health 返回 demo:false）隐藏整块演示账号：
+       密码是公开写死的，摆在登录页上等于给所有人一个后门。
+       请求失败时保持原样（本地开发/后端未启动时不影响正常登录）。 */
+    fetch('/api/health', { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (h) {
+        if (h && h.demo === false) {
+          var box = U.qs('#lgDemo');
+          if (box) box.remove();
+        }
+      })
+      .catch(function () { /* 忽略：拿不到配置就按开发环境处理 */ });
   }
 
   PMS.pages = PMS.pages || {};

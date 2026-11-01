@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 8  # 8 小时
 
+    # 运行环境：development / production。留空时按部署平台自动判断
+    env: str = ""
+
     # 前端静态目录（默认指向项目根，含 index.html）
     frontend_dir: str = str(PROJECT_ROOT)
 
@@ -51,6 +54,21 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def is_production(self) -> bool:
+        """是否跑在真实部署环境（用于收紧密钥、隐藏演示账号等行为）。
+
+        ENV 显式声明优先；否则按主流 PaaS 注入的环境变量推断——
+        Railway / Render / Fly 都会注入自己的标记变量。
+        """
+        explicit = (self.env or "").strip().lower()
+        if explicit:
+            return explicit in ("production", "prod")
+        return any(
+            os.getenv(k)
+            for k in ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "RENDER", "FLY_APP_NAME")
+        )
 
 
 settings = Settings()

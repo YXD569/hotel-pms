@@ -256,4 +256,56 @@ with TestClient(app) as client:
     client.post("/api/reset", headers=h)
     check("非法入参回归后重置", True)
 
+    # ------------------------------------------------------------------
+    # 20. 安全与一致性回归（本轮审计修复项）
+    # ------------------------------------------------------------------
+    # 20.1 静态托管不得泄露后端源码 / .env / 数据库。
+    # 回归：原实现 mount("/", 项目根)，本地默认配置下这三个路径都是 200，
+    # 任何人都能下载 JWT_SECRET（伪造任意角色令牌）与整库数据。
+    for path in ("/backend/.env", "/backend/hotel_pms.db",
+                 "/backend/app/config.py", "/backend/test_api.py"):
+        r = client.get(path)
+        check(f"不泄露 {path}", r.status_code == 404, f"status={r.status_code}")
+
+    # 20.2 前端资源必须仍然可访问（收紧白名单后不能把前端也挡掉）
+    r = client.get("/")
+    check("首页仍可访问", r.status_code == 200, f"status={r.status_code}")
+    r = client.get("/js/main.js")
+    check("js 资源仍可访问", r.status_code == 200, f"status={r.status_code}")
+    r = client.get("/css/base.css")
+    check("css 资源仍可访问", r.status_code == 200, f"status={r.status_code}")
+
+    # 20.3 状态快照按角色裁剪：客房部没有 guests.view / billing.view，
+    # 不得从接口拿到客人手机号与账单金额（页面看不到≠接口给不到）。
+    hk = client.post("/api/auth/login", json={"account": "housekeeping", "password": "123456"})
+    check("housekeeping 登录 200", hk.status_code == 200, hk.text)
+    hk_h = {"Authorization": f"Bearer {hk.json()['access_token']}"}
+    st_hk = client.get("/api/state", headers=hk_h).json()
+    check("客房部看不到客人档案", st_hk["guests"] == [], str(len(st_hk["guests"])))
+    check("客房部看不到账单", st_hk["folios"] == [], str(len(st_hk["folios"])))
+    check("客房部仍能看到房态", len(st_hk["rooms"]) >= 30, str(len(st_hk["rooms"])))
+    check("客房部仍能看到任务", len(st_hk["tasks"]) >= 1, str(len(st_hk["tasks"])))
+
+    # 20.4 任务退回非完成状态时必须清掉 doneAt（回归：会留下「待处理但已完成」的矛盾记录）
+    r = client.post("/api/tasks", headers=h,
+                    json={"roomNo": "0201", "type": "cleaning", "note": "回归", "assignee": ""})
+    rt_tid = r.json()["id"]
+    client.put(f"/api/tasks/{rt_tid}", headers=h, json={"status": "done"})
+    r = client.put(f"/api/tasks/{rt_tid}", headers=h, json={"status": "pending"})
+    check("任务退回 pending 成功", r.status_code == 200, r.text)
+    check("退回后 doneAt 已清空", r.json().get("doneAt") is None, str(r.json().get("doneAt")))
+
+    # 20.5 种子数据不得出现「订单房型 ≠ 房间实体房型」
+    # （回归：周慕云订高级大床房却排进 0311 行政套房，沈之航订高级房却记在 0301 标准双床房）
+    rt_state = client.get("/api/state", headers=h).json()
+    room_type_of = {x["no"]: x["typeCode"] for x in rt_state["rooms"]}
+    mismatch = [
+        b["id"] for b in rt_state["bookings"]
+        if b["roomNo"] and room_type_of.get(b["roomNo"]) != b["typeCode"]
+    ]
+    check("种子数据无房型错配", not mismatch, str(mismatch))
+
+    client.post("/api/reset", headers=h)
+    check("安全回归后重置", True)
+
 print(f"\n✅ 后端 E2E 全部通过（{PASS} 项断言）")

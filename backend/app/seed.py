@@ -126,6 +126,7 @@ def seed():
         bk_seq = 2601
         folio_seq = 1
         task_seq = 1
+        created_bookings = []   # 供结尾做「订单房型 vs 房间实体房型」一致性校验
 
         def add_booking(guest, phone, type_code, source, arrive, depart, price,
                         deposit, room_no, status, memo=""):
@@ -140,6 +141,7 @@ def seed():
                 memo=memo, created_at=arrive - timedelta(days=(2 + bk_seq % 5)),
             )
             db.add(b)
+            created_bookings.append(b)
             if status == "checkedin" and room_no:
                 room = room_by_no.get(room_no)
                 if room:
@@ -178,8 +180,10 @@ def seed():
                         done_at=None))
 
         # 在住 5 间
+        # 房间号必须落在对应房型里（SUP_K = 0211/0212/0305-0309/0401-0404），
+        # 否则会出现「订标准单间却住进行政套房」这类脏数据。
         inhouse = [
-            ("周慕云", "13912340001", "SUP_K", "0311", -2, 2, "direct", 1000,
+            ("周慕云", "13912340001", "SUP_K", "0309", -2, 2, "direct", 1000,
              [{"name": "迷你吧·可乐", "category": "杂项", "qty": 1, "amount": 15, "time": f"{_d(0)} 21:40"}]),
             ("顾北辰", "13912340005", "EXE_S", "0405", -1, 1, "corp", 2000,
              [{"name": "洗衣服务", "category": "杂项", "qty": 2, "amount": 80, "time": f"{_d(0)} 09:15"},
@@ -215,11 +219,11 @@ def seed():
         for guest, phone, tc, a, d, src in future:
             add_booking(guest, phone, tc, src, _d(a), _d(d), _price(tc), 0, None, "confirmed")
 
-        # 已结清离店 3 单
+        # 已结清离店 3 单（房间号同样必须是该房型的实体房间）
         checkedout = [
             ("林晚", "13912340002", "STD_S", "0201", -6, -4, "ctrip"),
             ("苏梨", "13912340004", "STD_D", "0205", -5, -3, "walkin"),
-            ("沈之航", "13912340003", "SUP_K", "0301", -8, -6, "phone"),
+            ("沈之航", "13912340003", "SUP_K", "0305", -8, -6, "phone"),
         ]
         for i, (guest, phone, tc, rno, a, d, src) in enumerate(checkedout):
             price = _price(tc)
@@ -265,6 +269,18 @@ def seed():
             adr = 415 + ((i * 29) % 60)
             db.add(DailyStat(date=dd, occ=occ, rooms_sold=rooms_sold, adr=adr,
                              revenue=rooms_sold * adr, revpar=round(rooms_sold * adr / 36)))
+
+        # 一致性自检：订单房型必须与它排到的实体房间房型一致。
+        # 服务层在办理入住时会拦这种数据，但种子数据是直接写库的，漏了校验就会
+        # 出现「订 458 元高级房、实际住 788 元行政套房」的脏数据，房态与报表全错。
+        mismatched = [
+            (b.id, b.guest_name, b.type_code, b.room_no, room_by_no[b.room_no].type_code)
+            for b in created_bookings
+            if b.room_no and b.room_no in room_by_no
+            and room_by_no[b.room_no].type_code != b.type_code
+        ]
+        if mismatched:
+            raise ValueError("种子数据房型错配：%r" % (mismatched,))
 
         db.commit()
         print("✅ 演示数据已写入（房型 %d / 员工 %d / 客人 %d / 房间 %d）" %

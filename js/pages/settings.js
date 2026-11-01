@@ -111,7 +111,11 @@
       '<div class="form-grid">' +
       PMS.ui.field('角色', '<select class="select" id="stRole">' +
         roles.map(function (r) {
-          return '<option value="' + r + '"' + (x && x.role === r ? ' selected' : '') + '>' + PMS.auth.ROLES[r].name + ' — ' + PMS.auth.ROLES[r].desc + '</option>';
+          /* 新增员工时默认落在「前台」：ROLES 的第一个键是 manager，
+             不给 selected 时浏览器就默认选中店长，管理员改个名字直接建出
+             一个全权限账号。这里显式把默认值钉死为最小可用权限。 */
+          var isSel = x ? x.role === r : r === 'front';
+          return '<option value="' + r + '"' + (isSel ? ' selected' : '') + '>' + PMS.auth.ROLES[r].name + ' — ' + PMS.auth.ROLES[r].desc + '</option>';
         }).join('') + '</select>', { req: true }) +
       PMS.ui.field('手机号', '<input class="input" id="stPhone" value="' + U.escapeHtml(x ? x.phone : '') + '">') +
       '</div>' +

@@ -11,5 +11,6 @@ router = APIRouter(prefix="/api", tags=["state"])
 
 
 @router.get("/state")
-def get_state(_: Staff = Depends(get_current_user), db: Session = Depends(get_db)):
-    return pms.get_state(db)
+def get_state(user: Staff = Depends(get_current_user), db: Session = Depends(get_db)):
+    # 按登录角色裁剪字段（账单金额 / 客人档案 / 员工手机号），越权数据不下发
+    return pms.get_state(db, user.role)

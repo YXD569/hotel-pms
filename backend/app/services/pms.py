@@ -159,17 +159,33 @@ def _task_out(t: Task) -> dict:
     }
 
 
-def get_state(db) -> dict:
+def get_state(db, role: str = "manager") -> dict:
+    """聚合状态快照。
+
+    按角色裁剪字段：/api/state 是一次性全量快照，如果不裁，客房部账号也能
+    拿到全部客人的手机号/证件与所有账单金额——越过了 RBAC 里
+    guests.view / billing.view 的边界（页面看不到，但接口给得到，
+    打开 DevTools 或直接 curl 就能读走）。
+    """
+    perms = ROLE_PERMS.get(role, [])
+
+    def allow(perm: str) -> bool:
+        return "*" in perms or perm in perms
+
+    can_billing = allow("billing.view")
+    can_guests = allow("guests.view")
+    can_settings = allow("settings.view")
+
     rooms = db.query(Room).order_by(Room.no).all()
     room_types = db.query(RoomType).all()
     bookings = db.query(Booking).all()
-    guests = db.query(Guest).all()
-    folios = db.query(Folio).all()
+    guests = db.query(Guest).all() if can_guests else []
+    folios = db.query(Folio).all() if can_billing else []
     tasks = db.query(Task).all()
     staff = db.query(Staff).all()
     daily = db.query(DailyStat).order_by(DailyStat.date).all()
 
-    items = db.query(FolioItem).all()
+    items = db.query(FolioItem).all() if can_billing else []
     items_by_folio = {}
     for it in items:
         items_by_folio.setdefault(it.folio_id, []).append(it)
@@ -192,7 +208,9 @@ def get_state(db) -> dict:
         "tasks": [_task_out(t) for t in tasks],
         "staff": [
             {"id": s.id, "name": s.name, "account": s.account, "role": s.role,
-             "phone": s.phone, "status": s.status}
+             # 手机号属于员工隐私，只有能看到「系统设置」的角色才下发
+             "phone": s.phone if can_settings else "",
+             "status": s.status}
             for s in staff
         ],
         "dailyStats": [
@@ -620,6 +638,10 @@ def update_task(db, tid, patch):
             room = db.get(Room, t.room_no)
             if room and t.type == "cleaning" and room.status == "VD":
                 room.status = "OK"
+        else:
+            # 已完成的任务被退回（误点「完成」后改回来），完成时间必须一起清掉，
+            # 否则列表里会出现「待处理 / 进行中」却带着 doneAt 的自相矛盾记录。
+            t.done_at = None
     if patch.get("assignee") is not None:
         t.assignee = _text(patch["assignee"], "分派对象", 64)
     if patch.get("note") is not None:

@@ -231,9 +231,12 @@
     inhouse.forEach(function (b) { revenueToday += b.price; });
     var pendingTasks = state.tasks.filter(function (t) { return t.status !== 'done'; });
     var openFolios = state.folios.filter(function (f) { return f.status === 'open'; });
+    // 出租率分母用「可售房」（总房数 − 停用房），与房态看板、报表的房型表同口径。
+    // 用总房数会把维修房算成卖不出去的库存，出租率被永久性压低且两页数字对不上。
+    var sellable = Math.max(total - oo, 0);
     return {
-      roomTotal: total, oc: oc, vd: vd, oo: oo, ok: okc,
-      occRate: total ? Math.round(oc / total * 100) : 0,
+      roomTotal: total, sellable: sellable, oc: oc, vd: vd, oo: oo, ok: okc,
+      occRate: sellable ? Math.round(oc / sellable * 100) : 0,
       arrivalsToday: arrivalsToday, arrivalsOverdue: arrivals.filter(function (b) { return b.arrive < T; }),
       departuresToday: departuresToday, inhouse: inhouse,
       revenueToday: revenueToday,

@@ -14,7 +14,7 @@
     var st = PMS.auth.current();
 
     var stats = [
-      { label: '今日出租率', value: d.occRate, unit: '%', foot: '在住 ' + d.oc + ' / ' + d.roomTotal + ' 间（停用 ' + d.oo + ' 间）', mark: d.occRate >= 80 ? 'var(--danger)' : 'var(--brass)' },
+      { label: '今日出租率', value: d.occRate, unit: '%', foot: '在住 ' + d.oc + ' / 可售 ' + d.sellable + ' 间（总 ' + d.roomTotal + ' · 停用 ' + d.oo + '）', mark: d.occRate >= 80 ? 'var(--danger)' : 'var(--brass)' },
       { label: '今日预抵', value: d.arrivalsToday.length, unit: '单', foot: d.unassigned.length ? '其中 ' + d.unassigned.length + ' 单未排房' : '全部已排房', mark: 'var(--st-oc)' },
       { label: '今日离店', value: d.departuresToday.length, unit: '单', foot: '请提醒客人 12:00 前退房', mark: 'var(--st-vd)' },
       { label: '今日房费收入', value: U.fmtMoneyShort(d.revenueToday), unit: '', foot: '按在住订单房价预估，不含杂项', mark: 'var(--success)' },

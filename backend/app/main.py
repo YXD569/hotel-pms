@@ -18,6 +18,7 @@ if __package__ in (None, ""):
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, text
 from sqlalchemy.exc import OperationalError
@@ -78,7 +79,14 @@ def _startup_banner() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _wait_for_db()
+    # 生产环境必须换掉默认密钥：默认值写在源码里，等于所有人都能签出
+    # 任意角色的 JWT（伪造店长令牌 = 全权限）。开发环境只告警，生产直接拒绝启动。
     if settings.jwt_secret in DEFAULT_JWT_SECRETS or len(settings.jwt_secret) < 32:
+        if settings.is_production:
+            raise RuntimeError(
+                "生产环境必须设置 JWT_SECRET（≥ 32 字节的随机字符串），"
+                "当前仍是默认值或长度不足，已拒绝启动。"
+            )
         logger.warning("JWT_SECRET 仍是默认值或长度不足 32 字节，生产环境请务必替换")
     # 启动即建表（已存在则跳过，不改动既有数据）
     Base.metadata.create_all(engine)
@@ -108,7 +116,9 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "yunlan-pms"}
+    # demo=False 时前端登录页会隐藏「演示账号一键填入」区块：
+    # 演示账号密码写在种子数据与登录页里，生产环境任由它显示等于公开后门。
+    return {"status": "ok", "service": "yunlan-pms", "demo": not settings.is_production}
 
 
 # ---- 业务路由：必须在静态 mount("/") 之前注册，否则会被静态兜底吞掉 ----
@@ -117,26 +127,43 @@ for _r in (auth, state, bookings, reception, billing, rooms, housekeeping, setti
 
 
 # ---- 前端静态托管（最后兜底）----
+# 只托管前端真正需要的白名单路径（index.html / css/ / js/）。
+#
+# 早期实现是 app.mount("/", StaticFiles(directory=项目根))：本地默认 FRONTEND_DIR
+# 就是仓库根，于是 /backend/.env、/backend/hotel_pms.db、/backend/app/*.py
+# 全部能被 HTTP 直接下载（实测均为 200）。任何一个能访问到端口的人都能拿到
+# JWT_SECRET（可伪造任意角色令牌）和整库数据（客人手机号、密码哈希）。
+# 容器里靠 Dockerfile 把前端复制到 /frontend 隔离，但本地开发走的是默认配置，
+# 所以必须在代码层收紧成白名单，而不是依赖部署方式。
+_FRONT_ALLOWED_DIRS = ("css", "js")
+
 _frontend = Path(settings.frontend_dir)
 if not _frontend.is_absolute():
     from app.config import PROJECT_ROOT
     _frontend = (PROJECT_ROOT / settings.frontend_dir).resolve()
+
 if _frontend.exists():
-    app.mount(
-        "/",
-        StaticFiles(directory=str(_frontend), html=True),
-        name="static",
-    )
+    for _sub in _FRONT_ALLOWED_DIRS:
+        _dir = _frontend / _sub
+        if _dir.is_dir():
+            app.mount(f"/{_sub}", StaticFiles(directory=str(_dir)), name=f"static-{_sub}")
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/index.html", include_in_schema=False)
+    def index_page():
+        return FileResponse(_frontend / "index.html")
 
 
 if __name__ == "__main__":
     # 直接运行本文件时的启动入口（等价于 uvicorn app.main:app）。
     # 传 app 对象而非 "app.main:app" 字符串，避免本模块被二次导入产生两个实例。
+    # 默认绑 127.0.0.1 而不是 0.0.0.0：本地开发时绑全网卡，同一 Wi-Fi/办公网内
+    # 任何人都能访问这个端口；需要局域网调试时用 HOST=0.0.0.0 显式开启。
     import os
     import uvicorn
 
     uvicorn.run(
         app,
-        host=os.environ.get("HOST", "0.0.0.0"),
+        host=os.environ.get("HOST", "127.0.0.1"),
         port=int(os.environ.get("PORT", "8000")),
     )
