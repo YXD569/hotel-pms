@@ -47,6 +47,7 @@
 
   /* ---------- 折线图 ---------- */
   function occChart(stats) {
+    if (!stats || stats.length < 2) return PMS.ui.empty('暂无出租率趋势数据');
     var W = 500, H = 190, PL = 36, PB = 22;
     var pts = stats.map(function (s, i) {
       return {
@@ -75,8 +76,9 @@
 
   /* ---------- 柱状图 ---------- */
   function revenueChart(stats) {
+    if (!stats || !stats.length) return PMS.ui.empty('暂无营收数据');
     var W = 500, H = 190, PL = 52, PB = 22;
-    var max = Math.max.apply(null, stats.map(function (s) { return s.revenue; })) * 1.1;
+    var max = Math.max.apply(null, stats.map(function (s) { return s.revenue; })) * 1.1 || 1;
     var bw = (W - PL - 10) / stats.length * 0.55;
     var gap = (W - PL - 10) / stats.length;
     var bars = stats.map(function (s, i) {

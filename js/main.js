@@ -7,7 +7,14 @@
   PMS.auth.restore();
 
   /* 启动数据层（异步：用已恢复的 token 拉取 GET /api/state），完成后再注册页面并渲染 */
-  PMS.api.init().then(function () {
+  PMS.api.init().then(function (state) {
+    /* 有会话却拿不到数据（后端未启动 / 网络异常）：清掉失效会话，回到登录页并提示，
+       避免页面在 state 为 null 时抛异常导致整屏空白 */
+    if (!state && PMS.auth.current()) {
+      PMS.auth.logout();
+      PMS.ui.toast('无法连接服务器，请确认后端已启动后重新登录', 'err');
+    }
+
     /* 注册页面（导航顺序） */
     [
       PMS.pages.dashboard,

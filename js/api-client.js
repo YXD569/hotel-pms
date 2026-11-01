@@ -94,7 +94,11 @@
   function roomByNo(no) { return state.rooms.filter(function (r) { return r.no === no; })[0] || null; }
   function bookingById(id) { return state.bookings.filter(function (b) { return b.id === id; })[0] || null; }
   function folioById(id) { return state.folios.filter(function (f) { return f.id === id; })[0] || null; }
-  function folioOfBooking(bid) { return state.folios.filter(function (f) { return f.bookingId === bid; })[0] || null; }
+  function folioOfBooking(bid) {
+    var list = state.folios.filter(function (f) { return f.bookingId === bid; });
+    // 优先未结账账单：历史账单可能因重置/重开而留下已结账记录
+    return list.filter(function (f) { return f.status === 'open'; })[0] || list[0] || null;
+  }
   function sourceName(key) {
     var s = state.sources.filter(function (x) { return x.key === key; })[0];
     return s ? s.name : key;
@@ -119,11 +123,12 @@
     return state.bookings.filter(function (b) { return b.status === 'confirmed' || b.status === 'checkedin'; });
   }
   function availability(typeCode, arrive, depart, excludeId) {
-    var rooms = state.rooms.filter(function (r) { return r.typeCode === typeCode; });
+    // 停用（OO）房不计入可售库存，与后端 availability 口径一致
+    var rooms = state.rooms.filter(function (r) { return r.typeCode === typeCode && r.status !== 'OO'; });
     var overlap = activeBookings().filter(function (b) {
       return b.id !== excludeId && b.typeCode === typeCode && b.arrive < depart && arrive < b.depart;
     });
-    return { total: rooms.length, booked: overlap.length, available: rooms.length - overlap.length };
+    return { total: rooms.length, booked: overlap.length, available: Math.max(0, rooms.length - overlap.length) };
   }
   function freeRooms(typeCode, arrive, depart, excludeId) {
     var busyNos = {};

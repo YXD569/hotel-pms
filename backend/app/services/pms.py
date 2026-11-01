@@ -102,7 +102,8 @@ def _folio_out(f: Folio, items) -> dict:
         else:
             payments.append({
                 "id": it.id, "name": it.name, "amount": it.amount, "method": it.method,
-                "note": it.note, "time": it.time, "voided": it.void, "refund": False,
+                "note": it.note, "time": it.time, "voided": it.void,
+                "refund": it.amount < 0,
             })
     return {
         "id": f.id, "bookingId": f.booking_id, "roomNo": f.room_no,
@@ -174,15 +175,17 @@ def active_bookings(db):
 
 
 def availability(db, type_code, arrive, depart, exclude_id=None):
+    """可售量计算：停用（OO）房不计入可售库存，避免把维修房卖出去。"""
     rooms = db.query(Room).filter(Room.type_code == type_code).all()
+    sellable = [r for r in rooms if r.status != "OO"]
     overlap = [
         b for b in active_bookings(db)
         if b.id != exclude_id and b.type_code == type_code
         and b.arrive < depart and arrive < b.depart
     ]
     return {
-        "total": len(rooms), "booked": len(overlap),
-        "available": len(rooms) - len(overlap),
+        "total": len(sellable), "booked": len(overlap),
+        "available": max(0, len(sellable) - len(overlap)),
     }
 
 
@@ -204,7 +207,13 @@ def validate_booking(db, d, exclude_id=None):
     if not is_phone(d.get("phone")):
         return "请填写正确的手机号"
     if d["arrive"] < date.today():
-        return "入住日期不能早于今天"
+        # 修改已有订单时允许保留原入住日期：超时未到的订单仍需可编辑
+        keep_original = False
+        if exclude_id:
+            cur = db.get(Booking, exclude_id)
+            keep_original = bool(cur and d["arrive"] == cur.arrive)
+        if not keep_original:
+            return "入住日期不能早于今天"
     if d["depart"] <= d["arrive"]:
         return "离店日期必须晚于入住日期"
     if not (d.get("price", 0) > 0):
@@ -297,8 +306,8 @@ def mark_noshow(db, bid):
     b = db.get(Booking, bid)
     if not b or b.status != "confirmed":
         raise ValueError("仅待入住的订单可标记未到店")
-    if b.arrive != date.today():
-        raise ValueError("只能在预抵当天标记未到店")
+    if b.arrive > date.today():
+        raise ValueError("未到店只能在预抵当天或之后标记")
     b.status = "noshow"
     b.room_no = None
     db.commit()
@@ -323,6 +332,8 @@ def check_in(db, bid, room_no, deposit, method):
     b = db.get(Booking, bid)
     if not b or b.status != "confirmed":
         raise ValueError("订单状态不允许办理入住")
+    if deposit is None or deposit < 0:
+        raise ValueError("押金不能为负数")
     target = room_no or b.room_no
     if not target:
         raise ValueError("请先为该订单选择房间")
@@ -331,6 +342,8 @@ def check_in(db, bid, room_no, deposit, method):
         raise ValueError("房间与房型不匹配")
     if room.status == "OO":
         raise ValueError("该房间已停用，不能安排入住")
+    if room.status == "VD":
+        raise ValueError("该房间尚未清洁，请先在客房管理中完成清洁任务")
     if not any(r.no == target for r in free_rooms(db, b.type_code, b.arrive, b.depart, b.id)):
         raise ValueError("该房间在此日期段已被占用")
 
@@ -356,8 +369,9 @@ def check_in(db, bid, room_no, deposit, method):
     return _booking_out(b)
 
 
-def _folio_computed(folio, booking, today):
-    items = folio["extras"] + folio["payments"]
+def _folio_computed(folio, booking):
+    """账单结账口径：房费按整段房晚计，杂项与收款均跳过作废条目。
+    退款以负数收款入账，因此 paid 直接累加即可得到真实已收（不会被退款虚增）。"""
     extras_total = sum(e["amount"] * e.get("qty", 1) for e in folio["extras"] if not e["voided"])
     paid = sum(p["amount"] for p in folio["payments"] if not p["voided"])
     room_fee = booking["nights"] * booking["price"] if booking else 0
@@ -381,17 +395,17 @@ def check_out(db, bid, method):
     items = db.query(FolioItem).filter(FolioItem.folio_id == f.id).all()
     folio_view = _folio_out(f, items)
     booking_view = _booking_out(b)
-    c = _folio_computed(folio_view, booking_view, date.today())
+    c = _folio_computed(folio_view, booking_view)
 
     if c["balance"] > 0:
         db.add(FolioItem(folio_id=f.id, kind="payment", name="收款",
                          amount=c["balance"], method=method or "现金",
                          note="离店补收", time=_now()))
     elif c["balance"] < 0:
-        db.add(FolioItem(folio_id=f.id, kind="payment", name="收款",
-                         amount=-c["balance"], method="现金",
-                         note="押金退还", time=_now(), ))
-        # 退款标记：通过额外字段在 view 层处理（保持简单，不入表）
+        # 押金富余：以负数收款记录退款，保证「已收合计」不被退款金额虚增
+        db.add(FolioItem(folio_id=f.id, kind="payment", name="押金退还",
+                         amount=c["balance"], method=method or "现金",
+                         note="押金退还", time=_now()))
     f.status = "settled"
     f.settled_at = _now()
     f.settled_total = c["total"]
@@ -424,9 +438,11 @@ def add_extra(db, folio_id, item):
         raise ValueError("仅未结账账单可以加项")
     if not (item.get("amount", 0) > 0):
         raise ValueError("请填写有效金额")
+    if (item.get("qty") or 1) < 1:
+        raise ValueError("数量至少为 1")
     db.add(FolioItem(
         folio_id=folio_id, kind="extra", name=item["name"],
-        category=item.get("category"), qty=item.get("qty", 1),
+        category=item.get("category"), qty=item.get("qty") or 1,
         amount=item["amount"], time=_now(),
     ))
     db.commit()
@@ -447,28 +463,29 @@ def add_payment(db, folio_id, amount, method, note):
     return _folio_out(f, db.query(FolioItem).filter(FolioItem.folio_id == folio_id).all())
 
 
-def void_extra(db, folio_id, item_id):
+def _void_item(db, folio_id, item_id, kind):
+    """作废账单条目：已结账账单不可再改动，且只能作废对应类型的条目。"""
+    f = db.get(Folio, folio_id)
+    if not f:
+        raise ValueError("账单不存在")
+    if f.status != "open":
+        raise ValueError("已结账账单不可作废条目")
     it = db.get(FolioItem, item_id)
-    if not it or it.folio_id != folio_id:
+    if not it or it.folio_id != folio_id or it.kind != kind:
         raise ValueError("账单条目不存在")
     if it.void:
         raise ValueError("该条目已作废")
     it.void = True
     db.commit()
-    f = db.get(Folio, folio_id)
     return _folio_out(f, db.query(FolioItem).filter(FolioItem.folio_id == folio_id).all())
+
+
+def void_extra(db, folio_id, item_id):
+    return _void_item(db, folio_id, item_id, "extra")
 
 
 def void_payment(db, folio_id, item_id):
-    it = db.get(FolioItem, item_id)
-    if not it or it.folio_id != folio_id:
-        raise ValueError("账单条目不存在")
-    if it.void:
-        raise ValueError("该条目已作废")
-    it.void = True
-    db.commit()
-    f = db.get(Folio, folio_id)
-    return _folio_out(f, db.query(FolioItem).filter(FolioItem.folio_id == folio_id).all())
+    return _void_item(db, folio_id, item_id, "payment")
 
 
 def set_invoice(db, folio_id, on):
@@ -520,6 +537,14 @@ def set_room_oo(db, room_no, note):
         raise ValueError("房间不存在")
     if r.status == "OC":
         raise ValueError("在住房间不能直接停用，请先办理退房")
+    today = date.today()
+    busy = db.query(Booking).filter(
+        Booking.room_no == room_no,
+        Booking.status.in_(["confirmed", "checkedin"]),
+        Booking.arrive <= today, Booking.depart > today,
+    ).first()
+    if busy:
+        raise ValueError("该房间今日有预抵/在住订单，请先处理订单再停用")
     r.status = "OO"
     r.ooo_note = note or ""
     db.commit()
@@ -541,6 +566,15 @@ def restore_room(db, room_no):
 
 
 # ---------- 设置 ----------
+def _next_staff_id(db) -> str:
+    """按现有 Sxxx 工号递增，避免随机三位数与既有工号碰撞。"""
+    nums = []
+    for sid, in db.query(Staff.id).all():
+        if sid and sid.startswith("S") and sid[1:].isdigit():
+            nums.append(int(sid[1:]))
+    return f"S{(max(nums) + 1) if nums else 1:03d}"
+
+
 def upsert_staff(db, s, current_account):
     import bcrypt
     if not (s.get("name") and s.get("account")):
@@ -564,7 +598,7 @@ def upsert_staff(db, s, current_account):
     else:
         if db.query(Staff).filter(Staff.account == s["account"]).first():
             raise ValueError("账号已存在")
-        sid = _uid("S", 3)
+        sid = _next_staff_id(db)
         staff = Staff(
             id=sid, name=s["name"], account=s["account"],
             password_hash=bcrypt.hashpw((s.get("password") or "123456").encode(), bcrypt.gensalt()).decode(),

@@ -266,8 +266,8 @@ def seed():
                              revenue=rooms_sold * adr, revpar=round(rooms_sold * adr / 36)))
 
         db.commit()
-    print("✅ 演示数据已写入（房型/%d 员工/%d 客人/%d 房间/预订/账务/任务/14天趋势）" %
-          (len(ROOM_TYPES), len(STAFF), len(GUESTS)))
+        print("✅ 演示数据已写入（房型 %d / 员工 %d / 客人 %d / 房间 %d）" %
+              (len(ROOM_TYPES), len(STAFF), len(GUESTS), len(rooms)))
 
 
 if __name__ == "__main__":

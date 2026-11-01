@@ -115,6 +115,7 @@
   }
 
   function trendHtml(stats) {
+    if (!stats || stats.length < 2) return PMS.ui.empty('暂无足够的趋势数据');
     var W = 460, H = 150, PL = 34, PB = 20;
     var pts = stats.map(function (s, i) {
       var x = PL + i * (W - PL - 10) / (stats.length - 1);

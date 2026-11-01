@@ -130,16 +130,22 @@
 
   /* ---------- 办理入住 ---------- */
   function openCheckinModal(b, done) {
-    var free = b.roomNo
-      ? PMS.api.freeRooms(b.typeCode, b.arrive, b.depart, b.id).filter(function (r) { return r.no === b.roomNo; })
-      : PMS.api.freeRooms(b.typeCode, b.arrive, b.depart, b.id);
-    if (free.length && b.roomNo && free.every(function (r) { return r.no !== b.roomNo; })) free.unshift(PMS.api.roomByNo(b.roomNo));
+    var allFree = PMS.api.freeRooms(b.typeCode, b.arrive, b.depart, b.id);
+    // 空脏房必须先完成清洁才能入住，不进候选列表
+    var ready = allFree.filter(function (r) { return r.status !== 'VD'; });
+    var dirtyCount = allFree.length - ready.length;
+    // 已排房优先锁定该房间；若该房间不可用（被占/停用/待清洁），退回全部可入住房间，
+    // 避免原实现里 fallback 失效导致误报「没有可入住房间」
+    var assigned = b.roomNo ? ready.filter(function (r) { return r.no === b.roomNo; }) : [];
+    var free = assigned.length ? assigned : ready;
 
     var roomSel = free.length
       ? '<select class="select" id="ciRoom">' +
         free.map(function (r) { return '<option value="' + r.no + '"' + (b.roomNo === r.no ? ' selected' : '') + '>' + r.no + '</option>'; }).join('') +
-        '</select>'
-      : '<div class="form-hint" style="color:var(--danger)">没有可入住房间：请先调整订单或等待空净房</div>';
+        '</select>' +
+        (dirtyCount ? '<div class="form-hint" style="color:var(--danger);margin-top:6px">另有 ' + dirtyCount + ' 间空脏房，需在客房管理完成清洁后才可安排入住。</div>' : '')
+      : '<div class="form-hint" style="color:var(--danger)">该房型暂无可入住房间（空净房）' +
+        (dirtyCount ? '：' + dirtyCount + ' 间空脏房待清洁' : '') + '，请先安排清洁或调整订单房型。</div>';
 
     var body =
       '<div class="info-list" style="margin-bottom:14px">' +
@@ -226,13 +232,16 @@
           PMS.api.checkOut(b.id, method).then(function (res) {
             PMS.ui.toast(b.guestName + ' 已退房，房间转待清洁');
             close(); done();
-            /* 退房成功后展示结算摘要 */
+            /* 退房成功后展示结算摘要（已收按账单实际收款汇总，含负数退款） */
+            var paidFinal = 0;
+            res.folio.payments.forEach(function (p) { if (!p.voided) paidFinal += p.amount; });
             PMS.ui.modal({
               title: '结算完成',
               body: '<div class="info-list">' +
                 '<div class="row"><span class="k">账单号</span><span class="v num">' + res.folio.id + '</span></div>' +
                 '<div class="row"><span class="k">结算总额</span><span class="v num">' + U.fmtMoney(res.computed.total) + '</span></div>' +
-                '<div class="row"><span class="k">已收合计</span><span class="v num">' + U.fmtMoney(res.computed.total) + '</span></div>' +
+                '<div class="row"><span class="k">已收合计</span><span class="v num">' + U.fmtMoney(paidFinal) + '</span></div>' +
+                '<div class="row"><span class="k">余额</span><span class="v num">' + U.fmtMoney(res.computed.total - paidFinal) + '</span></div>' +
                 '<div class="row"><span class="k">清洁任务</span><span class="v">已自动派发至客房部</span></div>' +
                 '</div>',
               footer: [{ text: '知道了', cls: 'btn-primary' }]

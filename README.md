@@ -49,7 +49,7 @@ hotel-pms/
 ├── js/
 │   ├── utils.js              DOM/日期/金额/校验工具
 │   ├── auth.js               会话 + RBAC 权限矩阵（5 角色 × 页面/动作双层，与后端一致）
-│   ├── api-client.js         HTTP API 客户端（对接后端，替代原 js/mock/api.js）
+│   ├── api-client.js         HTTP API 客户端（对接后端，含本地派生计算缓存）
 │   ├── components.js         模态/抽屉/确认框/Toast/表格组件
 │   ├── router.js             哈希路由 + 登录守卫 + 权限守卫
 │   ├── pages/                9 个业务页面（login/dashboard/rooms/…）
@@ -61,12 +61,12 @@ hotel-pms/
 │   │   ├── config.py         环境变量配置（DATABASE_URL / JWT_SECRET / CORS …）
 │   │   ├── models.py         9 张表 ORM 模型
 │   │   ├── auth/security.py  密码哈希(bcrypt) + JWT 签发校验 + RBAC 矩阵（与前端一致）
-│   │   ├── services/pms.py    业务逻辑层（移植自原 Mock，改为操作数据库）
+│   │   ├── services/pms.py    业务逻辑层（房量/预订/入住退房/账务/客房/设置）
 │   │   ├── routers/          auth / state / bookings / reception / billing / rooms / housekeeping / settings / guests
 │   │   └── seed.py          演示数据种子（36 间房 / 4 房型 / 员工 / 客人 / 预订 / 账务 / 任务 / 14 天趋势）
 │   ├── requirements.txt      fastapi / uvicorn / sqlalchemy / pymysql / pyjwt / bcrypt …
 │   ├── .env.example          环境变量示例（.env 已被忽略，不进仓库）
-│   └── test_api.py           后端 E2E 测试（24 条断言，FastAPI TestClient）
+│   └── test_api.py           后端 E2E 测试（41 条断言，FastAPI TestClient，可空库直接运行）
 ├── Dockerfile / railway.toml / .dockerignore   一键部署到 Railway（单镜像托管前后端）
 ├── e2e-test.js               前端 API 冒烟测试（Node，对“运行中的实例”做 HTTP 级校验）
 └── README.md
@@ -95,7 +95,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ### 仅预览前端（无后端）
 
-当前 `index.html` 默认加载对接后端的 `js/api-client.js`。若要脱离后端单独预览历史纯前端版，可参考 git 历史切回 `js/mock` 方案（不在本次全栈改造范围内）。
+本版本前端只保留对接后端的数据层（`js/api-client.js`），页面启动即调用 `GET /api/state`，**必须配合后端运行**。
+若只想要"纯前端 + localStorage 演示版"，可从 git 历史（提交 `b06f965`）取回当时的 `js/mock/` 与 `js/store.js` 方案（不在本次全栈改造范围内）。
 
 ## 后端 API 测试
 
@@ -104,7 +105,9 @@ cd hotel-pms/backend
 source .venv/Scripts/activate
 python test_api.py
 # 覆盖：health / 登录(正确·错误·无 token) / state 脱敏 / 房态数 / 创建预订 / 满房与日期校验 /
-# 入住→退房(computed 含 total/balance) / 重复退房拦截 / 清洁任务联动 / 客档编辑 / RBAC 越权 403 —— 24 条断言
+# 入住→退房(computed 含 total/balance) / 重复退房拦截 / 清洁任务联动 / 脏房入住拦截 /
+# 押金富余退款口径 / 超时未到 / 条目作废类型校验 / 可售量扣除停用房 / 员工工号递增 / RBAC 越权 403
+# —— 41 条断言，空库可直接运行（内部用 TestClient 上下文触发 lifespan 建表+种子）
 ```
 
 ## 前端 API 冒烟测试（Node，可选）
@@ -140,6 +143,18 @@ BASE_URL=https://你的 railway 域名  node e2e-test.js
 | `FRONTEND_DIR` | 前端静态目录（容器内路径） | Docker 内为 `/frontend` |
 | `CORS_ORIGINS` | 跨域来源（同源部署可留默认） | 本地 `localhost` 调试用 |
 | `PORT` | 监听端口（Railway 自动注入） | `8000` |
+
+## 关键业务规则（改动前请先确认）
+
+| 规则 | 说明 |
+|---|---|
+| 可售库存 | 房量按「房型房间数 − 停用（OO）房 − 该日期段已占用」计算，前端弹窗与后端校验同口径 |
+| 空脏房 | `VD` 房不可直接办理入住，必须先完成清洁任务（前端候选列表已过滤，后端二次拦截） |
+| 停用房 | 在住（OC）或当日有预抵/在住订单的房间不可停用，避免客人到店无房 |
+| 退款口径 | 退房时押金富余以**负数收款**入账（`refund=true`），保证「已收合计」不被退款金额虚增、结账后余额为 0 |
+| 未到店 | 预抵当天及之后均可标记未到店（超时未到仍在「今日预抵」列表里以红底提示）；未来预抵不可提前标记 |
+| 账单修改 | 已结账账单不可再加项/收款/作废条目；作废接口按条目类型校验（消费项与收款不可互串） |
+| 订单编辑 | 待入住订单可修改；若入住日期已是过去（超时未到），允许保留原日期修改其他字段 |
 
 ## 已知边界
 
