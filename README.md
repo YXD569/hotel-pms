@@ -78,18 +78,68 @@ hotel-pms/
 
 ### 推荐：启动后端（后端会一并托管前端）
 
-前置：Python 3.11+。本机无需安装数据库，默认用 SQLite 联调。
+前置：**Python 3.11+**（已在 3.13.2 上验证；3.9 及以下跑不了，见下方排错）。本机无需安装数据库，默认用 SQLite 联调。
+
+**Windows · PowerShell（VS Code 默认终端）**
+
+```powershell
+cd C:\Users\叶晓栋\Desktop\hotel-pms\backend
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-dev.txt
+Copy-Item .env.example .env -ErrorAction SilentlyContinue
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+**Windows · cmd**
+
+```bat
+cd C:\Users\叶晓栋\Desktop\hotel-pms\backend
+py -3.13 -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install -r requirements-dev.txt
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+**macOS / Linux**
 
 ```bash
 cd hotel-pms/backend
-python -m venv .venv && source .venv/Scripts/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env        # 默认已配好 SQLite + 本地 JWT，可直接用
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 打开浏览器访问 `http://localhost:8000` 即可（后端同时托管 `index.html` 与 `css/`、`js/`，**无需再开静态服务器 / Live Server**）。
 首次启动会自动 `CREATE TABLE` 并在数据库为空时灌入演示数据。
+
+> `requirements-dev.txt` = 运行依赖 + 测试依赖（`httpx2`）。只部署不测试时可用 `requirements.txt`。
+> 依赖已**锁定版本**，请勿改成 `>=`：starlette 1.10 起 TestClient 改用 `httpx2`，不锁版本重建环境会直接起不来。
+
+### 在 VS Code 里运行
+
+仓库已带 `.vscode/` 配置，打开 `hotel-pms` 文件夹即可：
+
+| 操作 | 效果 |
+|---|---|
+| **F5** → 选「PMS 后端（8000，可断点）」 | 启动后端并支持断点调试（工作目录自动设为 `backend`） |
+| **F5** → 选「后端测试 test_api.py」 | 断点调试 41 条断言 |
+| `Ctrl+Shift+B` | 提供「初始化环境 / 启动后端（热重载）/ 跑后端测试 / 跑前端冒烟」等任务 |
+
+`.vscode/settings.json` 已把解释器指向 `backend/.venv/Scripts/python.exe`，右下角显示的版本应为 **3.13.x**。
+
+### 排错：在 VS Code 里起不来
+
+| 报错关键词 | 原因 | 处理 |
+|---|---|---|
+| `TypeError: unsupported operand type(s) for \|: 'type' and 'NoneType'`<br>`dataclass() got an unexpected keyword argument 'slots'` | `.venv` 的解释器与包版本不匹配（如 venv 被 3.9 接管，但包装的是 3.13 的轮子） | 删掉 `.venv` 重建：`py -3.13 -m venv .venv` 再装依赖 |
+| `RuntimeError: ... requires the httpx2 package` | 只装了 `requirements.txt`，缺测试依赖 | `pip install -r requirements-dev.txt` |
+| `无法加载文件 ...Activate.ps1，因为在此系统上禁止运行脚本` | PowerShell 执行策略限制 | 当前窗口临时放开：`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`；或改用 cmd 的 `activate.bat` |
+| `Could not import module "app.main"` | 当前目录不是 `backend`（`app` 包不在路径里） | `cd backend` 后再启动，或用仓库自带任务 / F5 |
+| `ModuleNotFoundError: No module named 'uvicorn'` | 没激活虚拟环境，用的是全局 Python | 先激活，或直接用 `.venv\Scripts\python.exe -m uvicorn ...` |
+| `[Errno 10048] address already in use` | 8000 端口被占用 | 换端口 `--port 8001`，或 `netstat -ano \| findstr :8000` 后结束进程 |
+| 浏览器能开但页面空白 | 后端没起来（前端必须连后端） | 确认 `http://localhost:8000/api/health` 返回 `{"status":"ok",...}` |
 
 > 若本地有 MySQL：把 `.env` 的 `DATABASE_URL` 改为 `mysql+pymysql://user:pass@localhost:3306/hotel_pms?charset=utf8mb4` 即可。
 
@@ -100,10 +150,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## 后端 API 测试
 
-```bash
-cd hotel-pms/backend
-source .venv/Scripts/activate
+```powershell
+cd C:\Users\叶晓栋\Desktop\hotel-pms\backend
+.\.venv\Scripts\Activate.ps1
 python test_api.py
+# 或绕开激活：.\.venv\Scripts\python.exe test_api.py
 # 覆盖：health / 登录(正确·错误·无 token) / state 脱敏 / 房态数 / 创建预订 / 满房与日期校验 /
 # 入住→退房(computed 含 total/balance) / 重复退房拦截 / 清洁任务联动 / 脏房入住拦截 /
 # 押金富余退款口径 / 超时未到 / 条目作废类型校验 / 可售量扣除停用房 / 员工工号递增 / RBAC 越权 403

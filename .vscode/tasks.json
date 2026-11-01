@@ -1,0 +1,54 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "初始化环境（建 venv + 装依赖）",
+      "dependsOrder": "sequence",
+      "dependsOn": ["建虚拟环境", "装依赖"],
+      "problemMatcher": []
+    },
+    {
+      "label": "建虚拟环境",
+      "type": "shell",
+      "command": "py",
+      "args": ["-3.13", "-m", "venv", ".venv"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "装依赖",
+      "type": "shell",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "args": ["-m", "pip", "install", "-r", "requirements-dev.txt"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "启动后端（热重载）",
+      "type": "shell",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "args": ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "跑后端测试",
+      "type": "shell",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "args": ["test_api.py"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "跑前端 API 冒烟测试",
+      "type": "shell",
+      "command": "node",
+      "args": ["e2e-test.js"],
+      "options": { "cwd": "${workspaceFolder}", "env": { "BASE_URL": "http://127.0.0.1:8000" } },
+      "problemMatcher": []
+    }
+  ]
+}

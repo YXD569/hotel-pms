@@ -1,0 +1,5 @@
+# 开发/测试依赖：仅在跑 test_api.py 时需要
+-r requirements.txt
+
+# starlette 1.10 的 TestClient 官方要求 httpx2（缺失会直接 RuntimeError）
+httpx2==2.16.0
