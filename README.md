@@ -119,26 +119,37 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ### 在 VS Code 里运行
 
-仓库已带 `.vscode/` 配置，打开 `hotel-pms` 文件夹即可：
+**先做一次：右下角选解释器** → `backend\.venv\Scripts\python.exe`（应显示 Python 3.13.x）。
+也可以 `Ctrl+Shift+P` → `Python: Select Interpreter` → 选带 `.venv` 的那个。
+
+然后任选一种（三种方式都已实测通过）：
 
 | 操作 | 效果 |
 |---|---|
-| **F5** → 选「PMS 后端（8000，可断点）」 | 启动后端并支持断点调试（工作目录自动设为 `backend`） |
+| 打开 `backend/app/main.py`，点右上角 **▷ 运行 Python 文件** | 直接启动后端，最省事（文件内已处理 `sys.path`，不会再报 `No module named 'app'`） |
+| **F5** → 选「PMS 后端（8000，可断点）」 | 启动并支持断点调试（工作目录自动设为 `backend`） |
+| `Ctrl+Shift+B` → 选「启动后端（热重载）」 | 改代码自动重启，适合调前端联调 |
 | **F5** → 选「后端测试 test_api.py」 | 断点调试 41 条断言 |
-| `Ctrl+Shift+B` | 提供「初始化环境 / 启动后端（热重载）/ 跑后端测试 / 跑前端冒烟」等任务 |
 
-`.vscode/settings.json` 已把解释器指向 `backend/.venv/Scripts/python.exe`，右下角显示的版本应为 **3.13.x**。
+启动后终端出现 `Uvicorn running on http://0.0.0.0:8000`，浏览器开 `http://localhost:8000`。
+停止服务：终端里 `Ctrl+C`，或点 VS Code 调试工具栏的红色方块。
+
+`.vscode/settings.json` 已固定解释器并配置 `python.analysis.extraPaths`，`from app.*` 不会标红。
+
+> 注意：工作区请打开 **`hotel-pms` 根目录**，不要只打开 `backend`，否则 `.vscode/` 配置不生效。
 
 ### 排错：在 VS Code 里起不来
 
 | 报错关键词 | 原因 | 处理 |
 |---|---|---|
-| `TypeError: unsupported operand type(s) for \|: 'type' and 'NoneType'`<br>`dataclass() got an unexpected keyword argument 'slots'` | `.venv` 的解释器与包版本不匹配（如 venv 被 3.9 接管，但包装的是 3.13 的轮子） | 删掉 `.venv` 重建：`py -3.13 -m venv .venv` 再装依赖 |
+| `ModuleNotFoundError: No module named 'app'` | 用旧方式直接跑了 `app/main.py`（脚本模式下 `sys.path[0]` 是 `app/`） | 已在本版修复；若仍出现，确认拉的是最新代码 |
+| `TypeError: unsupported operand type(s) for \|: 'type' and 'NoneType'`<br>`dataclass() got an unexpected keyword argument 'slots'` | `.venv` 的解释器与包版本不匹配（如 venv 被 3.9 接管，但装的是 3.13 的轮子） | 删掉 `.venv` 重建：`py -3.13 -m venv .venv` 再装依赖 |
 | `RuntimeError: ... requires the httpx2 package` | 只装了 `requirements.txt`，缺测试依赖 | `pip install -r requirements-dev.txt` |
 | `无法加载文件 ...Activate.ps1，因为在此系统上禁止运行脚本` | PowerShell 执行策略限制 | 当前窗口临时放开：`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`；或改用 cmd 的 `activate.bat` |
 | `Could not import module "app.main"` | 当前目录不是 `backend`（`app` 包不在路径里） | `cd backend` 后再启动，或用仓库自带任务 / F5 |
 | `ModuleNotFoundError: No module named 'uvicorn'` | 没激活虚拟环境，用的是全局 Python | 先激活，或直接用 `.venv\Scripts\python.exe -m uvicorn ...` |
-| `[Errno 10048] address already in use` | 8000 端口被占用 | 换端口 `--port 8001`，或 `netstat -ano \| findstr :8000` 后结束进程 |
+| 终端里 `python` 版本是 3.9 | 选错了解释器 | `Ctrl+Shift+P` → `Python: Select Interpreter` 改回 `.venv` |
+| `[Errno 10048] address already in use` | 8000 端口被占用（常见于上次的服务没停） | 换端口 `--port 8001`，或 `netstat -ano \| findstr :8000` 后结束进程 |
 | 浏览器能开但页面空白 | 后端没起来（前端必须连后端） | 确认 `http://localhost:8000/api/health` 返回 `{"status":"ok",...}` |
 
 > 若本地有 MySQL：把 `.env` 的 `DATABASE_URL` 改为 `mysql+pymysql://user:pass@localhost:3306/hotel_pms?charset=utf8mb4` 即可。
