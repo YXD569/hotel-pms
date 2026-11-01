@@ -52,7 +52,13 @@
         else p = null;
         if (!p) return;
         p.then(function () {
-          PMS.ui.toast(act === 'done' ? t.roomNo + ' 清洁完成，房间已恢复可售' : '任务已更新');
+          var msg = '任务已更新';
+          if (act === 'done') {
+            msg = t.type === 'cleaning'
+              ? t.roomNo + ' 清洁完成，房间已恢复可售'
+              : t.roomNo + ' 维修任务已完成（房间仍为停用状态，需手动恢复）';
+          }
+          PMS.ui.toast(msg);
           render(host);
         }).catch(function (e) { PMS.ui.toast(e.message, 'err'); });
       });

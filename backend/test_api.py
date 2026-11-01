@@ -196,4 +196,64 @@ with TestClient(app) as client:
     client.post("/api/reset", headers=h)
     check("客档编辑后重置", True)
 
+    # 19 非法入参回归（以下都是「本地 SQLite 放过、线上才炸」或「静默污染数据」的坑）
+    # 19.1 未来预抵不得提前入住（否则房间被提前占成在住，房态与报表错位）
+    r = client.post("/api/bookings", headers=h, json={
+        "guestName": "提前客", "phone": "13800007001", "typeCode": "STD_S", "source": "walkin",
+        "arrive": d(20), "depart": d(22), "price": 328, "deposit": 0, "roomNo": "0201", "memo": "",
+    })
+    check("未来订单创建 200", r.status_code == 200, r.text)
+    early_bid = r.json()["id"]
+    r = client.post("/api/reception/checkin", headers=h,
+                    json={"bookingId": early_bid, "roomNo": "0201", "deposit": 0, "method": "现金"})
+    check("未到入住日期 -> 400", r.status_code == 400, r.text)
+    check("提前入住提示含日期", "入住日期" in r.text, r.text)
+
+    # 19.2 修改预订时押金必须真正写入（回归：原实现静默丢弃 deposit）
+    r = client.put("/api/bookings/" + early_bid, headers=h, json={
+        "guestName": "提前客", "phone": "13800007001", "typeCode": "STD_S", "source": "walkin",
+        "arrive": d(20), "depart": d(22), "price": 328, "deposit": 800, "roomNo": None, "memo": "",
+    })
+    check("修改预订 200", r.status_code == 200, r.text)
+    check("押金修改已生效", r.json().get("deposit") == 800, str(r.json().get("deposit")))
+
+    # 19.3 不存在的房型 / 渠道 -> 400（MySQL 下会被外键打成 500）
+    r = client.post("/api/bookings", headers=h, json={
+        "guestName": "错房型", "phone": "13800007002", "typeCode": "NOPE", "source": "walkin",
+        "arrive": d(30), "depart": d(31), "price": 328, "deposit": 0, "roomNo": None, "memo": "",
+    })
+    check("不存在房型 -> 400", r.status_code == 400, r.text)
+    r = client.post("/api/bookings", headers=h, json={
+        "guestName": "错渠道", "phone": "13800007003", "typeCode": "STD_S", "source": "wechat",
+        "arrive": d(30), "depart": d(31), "price": 328, "deposit": 0, "roomNo": None, "memo": "",
+    })
+    check("不存在渠道 -> 400", r.status_code == 400, r.text)
+
+    # 19.4 超大金额 -> 400（回归：原实现 OverflowError 变 500）
+    st = client.get("/api/state", headers=h).json()
+    open_fid = [f for f in st["folios"] if f["status"] == "open"][0]["id"]
+    r = client.post(f"/api/folios/{open_fid}/pay", headers=h,
+                    json={"amount": 99999999999999999999, "method": "现金", "note": ""})
+    check("超大金额 -> 400 而非 500", r.status_code == 400, r.text)
+
+    # 19.5 任务状态 / 类型必须是枚举值（回归：原实现可写入 bogus，任务从看板消失）
+    tid = client.get("/api/state", headers=h).json()["tasks"][0]["id"]
+    r = client.put(f"/api/tasks/{tid}", headers=h, json={"status": "bogus"})
+    check("非法任务状态 -> 400", r.status_code == 400, r.text)
+    r = client.post("/api/tasks", headers=h,
+                    json={"roomNo": "0201", "type": "bogus", "note": "", "assignee": ""})
+    check("非法任务类型 -> 400", r.status_code == 400, r.text)
+
+    # 19.6 员工角色必须存在于权限矩阵（回归：未知角色登录后白屏）
+    r = client.post("/api/staff", headers=h,
+                    json={"name": "幽灵", "account": "ghost", "role": "superadmin", "phone": "13800007004"})
+    check("非法角色 -> 400", r.status_code == 400, r.text)
+
+    # 19.7 客档姓名必填（回归：原实现允许建立空姓名档案）
+    r = client.post("/api/guests", headers=h, json={"name": "", "phone": "13800007005"})
+    check("空姓名客档 -> 400", r.status_code == 400, r.text)
+
+    client.post("/api/reset", headers=h)
+    check("非法入参回归后重置", True)
+
 print(f"\n✅ 后端 E2E 全部通过（{PASS} 项断言）")

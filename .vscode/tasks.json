@@ -27,9 +27,9 @@
       "label": "启动后端（热重载）",
       "type": "shell",
       "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
-      "args": ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
+      "args": ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000", "--reload"],
       "options": { "cwd": "${workspaceFolder}/backend" },
-      "isBackground": true,
+      "group": { "kind": "build", "isDefault": true },
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },
@@ -48,6 +48,14 @@
       "command": "node",
       "args": ["e2e-test.js"],
       "options": { "cwd": "${workspaceFolder}", "env": { "BASE_URL": "http://127.0.0.1:8000" } },
+      "problemMatcher": []
+    },
+    {
+      "label": "跑前端数据层单测",
+      "type": "shell",
+      "command": "node",
+      "args": ["front-tests.mjs"],
+      "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     }
   ]

@@ -10,6 +10,8 @@ import re
 import string
 from datetime import date, datetime
 
+from app.auth.security import ROLE_PERMS
+from app.config import DEMO_PASSWORD
 from app.models import (
     Booking,
     DailyStat,
@@ -23,6 +25,15 @@ from app.models import (
 )
 
 HOTEL_NAME = "云澜大酒店"
+
+# 单笔金额上限：既要防「填错一个 0」，也要挡住超出 SQLite/MySQL 整型范围的输入
+# （超大整数会抛 OverflowError 直接变成 500，而不是可读的 400）。
+MAX_MONEY = 9_999_999
+MAX_QTY = 99
+SOURCE_KEYS = {"walkin", "phone", "ctrip", "meituan", "direct", "corp"}
+TASK_TYPES = {"cleaning", "maintenance"}
+TASK_STATUS = {"pending", "doing", "done"}
+VIP_LEVELS = {"普通", "银卡", "金卡", "钻石"}
 
 SOURCES = [
     {"key": "walkin", "name": "上门散客"},
@@ -68,6 +79,32 @@ def is_phone(v):
 def type_name(db, code):
     t = db.get(RoomType, code)
     return t.name if t else code
+
+
+# ---------- 入参边界校验 ----------
+# 统一在服务层边界处校验：前端可绕过、SQLite 不校验 VARCHAR 长度，
+# 但部署到 MySQL 严格模式后超长字段会直接报错（500）或静默截断。
+def _text(value, label, maxlen, required=False):
+    s = "" if value is None else str(value).strip()
+    if required and not s:
+        raise ValueError("请填写" + label)
+    if len(s) > maxlen:
+        raise ValueError(f"{label}不能超过 {maxlen} 个字符")
+    return s
+
+
+def _money(value, label, minimum=1, maximum=MAX_MONEY):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"{label}必须是整数")
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label}必须是整数")
+    if n != float(value):
+        raise ValueError(f"{label}必须是整数")
+    if n < minimum or n > maximum:
+        raise ValueError(f"{label}需在 {minimum} ~ {maximum} 之间")
+    return n
 
 
 # ---------- 序列化 ----------
@@ -201,6 +238,40 @@ def free_rooms(db, type_code, arrive, depart, exclude_id=None):
 
 
 # ---------- 预订 ----------
+def normalize_booking_input(db, d):
+    """把预订入参清洗成可写库的规范字典；任一字段不合法即抛 ValueError。
+
+    除了业务校验，还挡掉「房型/渠道不存在」这类会让 MySQL 外键直接报 500 的情况
+    （SQLite 默认不校验外键，本地测不出来）。
+    """
+    arrive, depart = d.get("arrive"), d.get("depart")
+    if not isinstance(arrive, date) or not isinstance(depart, date):
+        raise ValueError("请填写有效的入住 / 离店日期")
+
+    type_code = _text(d.get("typeCode"), "房型", 16, required=True)
+    if not db.get(RoomType, type_code):
+        raise ValueError("房型不存在，请重新选择")
+
+    source = _text(d.get("source") or "walkin", "渠道", 16)
+    if source not in SOURCE_KEYS:
+        raise ValueError("渠道来源不正确")
+
+    room_no = _text(d.get("roomNo"), "房间号", 8) or None
+
+    return {
+        "guestName": _text(d.get("guestName"), "客人姓名", 64, required=True),
+        "phone": _text(d.get("phone"), "手机号", 32, required=True),
+        "typeCode": type_code,
+        "source": source,
+        "arrive": arrive,
+        "depart": depart,
+        "price": _money(d.get("price"), "房价", 1),
+        "deposit": _money(d.get("deposit") or 0, "押金", 0),
+        "roomNo": room_no,
+        "memo": _text(d.get("memo"), "备注", 500),
+    }
+
+
 def validate_booking(db, d, exclude_id=None):
     if not (d.get("guestName") or "").strip():
         return "请填写客人姓名"
@@ -228,16 +299,17 @@ def validate_booking(db, d, exclude_id=None):
 
 
 def create_booking(db, d):
+    d = normalize_booking_input(db, d)
     err = validate_booking(db, d)
     if err:
         raise ValueError(err)
     b = Booking(
-        id=_uid("B"), guest_name=d["guestName"].strip(), phone=d["phone"],
-        type_code=d["typeCode"], source=d.get("source", "walkin"),
+        id=_uid("B"), guest_name=d["guestName"], phone=d["phone"],
+        type_code=d["typeCode"], source=d["source"],
         arrive=d["arrive"], depart=d["depart"],
         nights=(d["depart"] - d["arrive"]).days, price=d["price"],
-        deposit=d.get("deposit", 0) or 0, room_no=d.get("roomNo"),
-        status="confirmed", memo=d.get("memo", "") or "", created_at=date.today(),
+        deposit=d["deposit"], room_no=d["roomNo"],
+        status="confirmed", memo=d["memo"], created_at=date.today(),
     )
     db.add(b)
     db.commit()
@@ -259,9 +331,12 @@ def update_booking(db, bid, d):
         "arrive": d.get("arrive", b.arrive),
         "depart": d.get("depart", b.depart),
         "price": d.get("price", b.price),
+        # 押金也要能改：原实现漏了这一项，表单里改押金保存后会被静默丢弃
+        "deposit": d.get("deposit", b.deposit),
         "roomNo": d.get("roomNo", b.room_no),
-        "memo": d.get("memo", b.memo) or "",
+        "memo": d.get("memo", b.memo),
     }
+    merged = normalize_booking_input(db, merged)
     err = validate_booking(db, merged, exclude_id=bid)
     if err:
         raise ValueError(err)
@@ -272,6 +347,7 @@ def update_booking(db, bid, d):
     b.arrive = merged["arrive"]
     b.depart = merged["depart"]
     b.price = merged["price"]
+    b.deposit = merged["deposit"]
     b.room_no = merged["roomNo"]
     b.memo = merged["memo"]
     b.nights = (merged["depart"] - merged["arrive"]).days
@@ -332,9 +408,12 @@ def check_in(db, bid, room_no, deposit, method):
     b = db.get(Booking, bid)
     if not b or b.status != "confirmed":
         raise ValueError("订单状态不允许办理入住")
-    if deposit is None or deposit < 0:
-        raise ValueError("押金不能为负数")
-    target = room_no or b.room_no
+    # 未来预抵不允许提前入住：否则房间会被提前占成在住，房态与经营数据全部错位
+    if b.arrive > date.today():
+        raise ValueError("还未到入住日期（" + _iso(b.arrive) + "），不能提前办理入住")
+    deposit = _money(0 if deposit is None else deposit, "押金", 0)
+    method = _text(method or "现金", "收款方式", 32)
+    target = _text(room_no, "房间号", 8) or b.room_no
     if not target:
         raise ValueError("请先为该订单选择房间")
     room = db.get(Room, target)
@@ -342,6 +421,8 @@ def check_in(db, bid, room_no, deposit, method):
         raise ValueError("房间与房型不匹配")
     if room.status == "OO":
         raise ValueError("该房间已停用，不能安排入住")
+    if room.status == "OC":
+        raise ValueError("该房间已有客人在住")
     if room.status == "VD":
         raise ValueError("该房间尚未清洁，请先在客房管理中完成清洁任务")
     if not any(r.no == target for r in free_rooms(db, b.type_code, b.arrive, b.depart, b.id)):
@@ -349,7 +430,7 @@ def check_in(db, bid, room_no, deposit, method):
 
     b.status = "checkedin"
     b.room_no = target
-    b.deposit = deposit or 0
+    b.deposit = deposit
     room.status = "OC"
     room.booking_id = b.id
 
@@ -361,7 +442,7 @@ def check_in(db, bid, room_no, deposit, method):
     if b.deposit > 0:
         db.add(FolioItem(
             folio_id=f.id, kind="payment", name="收款", amount=b.deposit,
-            method=method or "现金", note="预收押金", time=_now(),
+            method=method, note="预收押金", time=_now(),
         ))
     _ensure_guest(db, b.guest_name, b.phone)
     db.commit()
@@ -388,6 +469,7 @@ def check_out(db, bid, method):
     b = db.get(Booking, bid)
     if not b or b.status != "checkedin":
         raise ValueError("订单状态不允许办理退房")
+    method = _text(method or "现金", "收款方式", 32)
     f = db.query(Folio).filter(Folio.booking_id == bid, Folio.status == "open").first()
     if not f:
         raise ValueError("找不到关联账单")
@@ -399,13 +481,20 @@ def check_out(db, bid, method):
 
     if c["balance"] > 0:
         db.add(FolioItem(folio_id=f.id, kind="payment", name="收款",
-                         amount=c["balance"], method=method or "现金",
+                         amount=c["balance"], method=method,
                          note="离店补收", time=_now()))
     elif c["balance"] < 0:
         # 押金富余：以负数收款记录退款，保证「已收合计」不被退款金额虚增
         db.add(FolioItem(folio_id=f.id, kind="payment", name="押金退还",
-                         amount=c["balance"], method=method or "现金",
+                         amount=c["balance"], method=method,
                          note="押金退还", time=_now()))
+
+    # 补收 / 退款条目落库后重新汇总，保证返回的 computed 是「结算后」口径
+    # （否则调用方读到的 paid 还是付款前的值，余额看起来没平）
+    db.flush()
+    items = db.query(FolioItem).filter(FolioItem.folio_id == f.id).all()
+    c = _folio_computed(_folio_out(f, items), booking_view)
+
     f.status = "settled"
     f.settled_at = _now()
     f.settled_total = c["total"]
@@ -436,14 +525,13 @@ def add_extra(db, folio_id, item):
     f = db.get(Folio, folio_id)
     if not f or f.status != "open":
         raise ValueError("仅未结账账单可以加项")
-    if not (item.get("amount", 0) > 0):
-        raise ValueError("请填写有效金额")
-    if (item.get("qty") or 1) < 1:
-        raise ValueError("数量至少为 1")
+    name = _text(item.get("name"), "项目名称", 128, required=True)
+    category = _text(item.get("category"), "类别", 32)
+    amount = _money(item.get("amount"), "金额", 1)
+    qty = _money(item.get("qty") or 1, "数量", 1, MAX_QTY)
     db.add(FolioItem(
-        folio_id=folio_id, kind="extra", name=item["name"],
-        category=item.get("category"), qty=item.get("qty") or 1,
-        amount=item["amount"], time=_now(),
+        folio_id=folio_id, kind="extra", name=name,
+        category=category, qty=qty, amount=amount, time=_now(),
     ))
     db.commit()
     return _folio_out(f, db.query(FolioItem).filter(FolioItem.folio_id == folio_id).all())
@@ -453,11 +541,12 @@ def add_payment(db, folio_id, amount, method, note):
     f = db.get(Folio, folio_id)
     if not f or f.status != "open":
         raise ValueError("仅未结账账单可以收款")
-    if not (amount > 0):
-        raise ValueError("请填写有效金额")
+    amount = _money(amount, "收款金额", 1)
+    method = _text(method or "现金", "收款方式", 32)
+    note = _text(note or "账房收款", "备注", 500)
     db.add(FolioItem(
         folio_id=folio_id, kind="payment", name="收款", amount=amount,
-        method=method, note=note or "账房收款", time=_now(),
+        method=method, note=note, time=_now(),
     ))
     db.commit()
     return _folio_out(f, db.query(FolioItem).filter(FolioItem.folio_id == folio_id).all())
@@ -501,9 +590,15 @@ def set_invoice(db, folio_id, on):
 
 # ---------- 客房任务 ----------
 def create_task(db, room_no, ttype, note, assignee):
+    room_no = _text(room_no, "房间号", 8, required=True)
+    if not db.get(Room, room_no):
+        raise ValueError("房间不存在")
+    if ttype not in TASK_TYPES:
+        raise ValueError("任务类型不正确（只能是 cleaning / maintenance）")
     t = Task(
         id=_uid("T"), room_no=room_no, type=ttype, status="pending",
-        assignee=assignee or "", note=note or "", created_at=_now(), done_at=None,
+        assignee=_text(assignee, "分派对象", 64), note=_text(note, "备注", 500),
+        created_at=_now(), done_at=None,
     )
     db.add(t)
     db.commit()
@@ -515,17 +610,20 @@ def update_task(db, tid, patch):
     t = db.get(Task, tid)
     if not t:
         raise ValueError("任务不存在")
-    if patch.get("status"):
-        t.status = patch["status"]
-        if patch["status"] == "done":
+    if patch.get("status") is not None:
+        status = patch["status"]
+        if status not in TASK_STATUS:
+            raise ValueError("任务状态不正确（只能是 pending / doing / done）")
+        t.status = status
+        if status == "done":
             t.done_at = _now()
             room = db.get(Room, t.room_no)
             if room and t.type == "cleaning" and room.status == "VD":
                 room.status = "OK"
     if patch.get("assignee") is not None:
-        t.assignee = patch["assignee"]
+        t.assignee = _text(patch["assignee"], "分派对象", 64)
     if patch.get("note") is not None:
-        t.note = patch["note"]
+        t.note = _text(patch["note"], "备注", 500)
     db.commit()
     db.refresh(t)
     return _task_out(t)
@@ -537,6 +635,9 @@ def set_room_oo(db, room_no, note):
         raise ValueError("房间不存在")
     if r.status == "OC":
         raise ValueError("在住房间不能直接停用，请先办理退房")
+    note = _text(note, "停用原因", 500)
+    if not note:
+        raise ValueError("请填写停用原因")
     today = date.today()
     busy = db.query(Booking).filter(
         Booking.room_no == room_no,
@@ -546,7 +647,7 @@ def set_room_oo(db, room_no, note):
     if busy:
         raise ValueError("该房间今日有预抵/在住订单，请先处理订单再停用")
     r.status = "OO"
-    r.ooo_note = note or ""
+    r.ooo_note = note
     db.commit()
     db.refresh(r)
     return {"no": r.no, "floor": r.floor, "typeCode": r.type_code,
@@ -575,34 +676,52 @@ def _next_staff_id(db) -> str:
     return f"S{(max(nums) + 1) if nums else 1:03d}"
 
 
+def _staff_password(raw) -> str:
+    """员工密码策略：6~64 字节（bcrypt 只取前 72 字节，超长会被静默截断）。"""
+    pwd = _text(raw, "密码", 64, required=True)
+    if len(pwd.encode("utf-8")) < 6:
+        raise ValueError("密码至少 6 位")
+    return pwd
+
+
 def upsert_staff(db, s, current_account):
     import bcrypt
-    if not (s.get("name") and s.get("account")):
-        raise ValueError("姓名与账号必填")
+    name = _text(s.get("name"), "姓名", 64, required=True)
+    account = _text(s.get("account"), "账号", 64, required=True)
+    role = _text(s.get("role") or "front", "角色", 32, required=True)
+    # 角色必须落在权限矩阵里：写入未知角色后，该账号登录会拿不到任何页面
+    # （前端 ROLE_PERMS 查不到 → 无菜单；ROLES 查不到 → 直接抛异常白屏）
+    if role not in ROLE_PERMS:
+        raise ValueError("角色不存在")
+    phone = _text(s.get("phone"), "手机号", 32)
+    if phone and not is_phone(phone):
+        raise ValueError("请填写正确的手机号")
+
     if s.get("id"):
         old = db.get(Staff, s["id"])
         if not old:
             raise ValueError("员工不存在")
-        if db.query(Staff).filter(Staff.account == s["account"], Staff.id != s["id"]).first():
+        if db.query(Staff).filter(Staff.account == account, Staff.id != s["id"]).first():
             raise ValueError("账号已存在")
-        old.name = s["name"]
-        old.account = s["account"]
-        old.role = s.get("role", old.role)
-        old.phone = s.get("phone", old.phone) or ""
+        old.name = name
+        old.account = account
+        old.role = role
+        old.phone = phone
         if s.get("password"):
-            old.password_hash = bcrypt.hashpw(s["password"].encode(), bcrypt.gensalt()).decode()
+            old.password_hash = bcrypt.hashpw(_staff_password(s["password"]).encode(), bcrypt.gensalt()).decode()
         db.commit()
         db.refresh(old)
         return {"id": old.id, "name": old.name, "account": old.account,
                 "role": old.role, "phone": old.phone, "status": old.status}
     else:
-        if db.query(Staff).filter(Staff.account == s["account"]).first():
+        if db.query(Staff).filter(Staff.account == account).first():
             raise ValueError("账号已存在")
         sid = _next_staff_id(db)
+        raw_pwd = _staff_password(s["password"]) if s.get("password") else DEMO_PASSWORD
         staff = Staff(
-            id=sid, name=s["name"], account=s["account"],
-            password_hash=bcrypt.hashpw((s.get("password") or "123456").encode(), bcrypt.gensalt()).decode(),
-            role=s.get("role", "front"), phone=s.get("phone", "") or "", status="active",
+            id=sid, name=name, account=account,
+            password_hash=bcrypt.hashpw(raw_pwd.encode(), bcrypt.gensalt()).decode(),
+            role=role, phone=phone, status="active",
         )
         db.add(staff)
         db.commit()
@@ -628,27 +747,48 @@ def update_room_type(db, code, patch):
     t = db.get(RoomType, code)
     if not t:
         raise ValueError("房型不存在")
-    if not (patch.get("basePrice", 0) > 0):
-        raise ValueError("请填写有效价格")
-    t.base_price = patch["basePrice"]
-    if patch.get("name"):
-        t.name = patch["name"]
+    base_price = _money(patch.get("basePrice"), "门市价", 1, 999_999)
+    t.base_price = base_price
+    name = _text(patch.get("name"), "房型名称", 64)
+    if name:
+        t.name = name
     db.commit()
     db.refresh(t)
     return {"code": t.code, "name": t.name, "basePrice": t.base_price,
             "capacity": t.capacity, "size": t.size}
 
 
+def _guest_tags(tags):
+    if tags is None:
+        return None
+    if not isinstance(tags, list):
+        raise ValueError("标签必须是数组")
+    out = []
+    for tag in tags:
+        item = _text(tag, "标签", 16)
+        if item and item not in out:
+            out.append(item)
+    if len(out) > 8:
+        raise ValueError("标签最多 8 个")
+    return out
+
+
 def create_guest(db, d):
-    if not is_phone(d.get("phone")):
+    name = _text(d.get("name"), "客人姓名", 64, required=True)
+    phone = _text(d.get("phone"), "手机号", 32, required=True)
+    if not is_phone(phone):
         raise ValueError("请填写正确的手机号")
-    existing = db.query(Guest).filter(Guest.phone == d["phone"]).first()
+    existing = db.query(Guest).filter(Guest.phone == phone).first()
     if existing:
         raise ValueError("该手机号已存在")
+    vip = _text(d.get("vip") or "普通", "会员等级", 16)
+    if vip not in VIP_LEVELS:
+        raise ValueError("会员等级不存在")
     g = Guest(
-        id=_uid("G", 4), name=d.get("name", ""), phone=d["phone"],
-        id_card_masked=d.get("idCardMasked", ""), vip=d.get("vip", "普通"),
-        tags=d.get("tags", []), notes=d.get("notes", ""), stays=0, spend=0,
+        id=_uid("G", 4), name=name, phone=phone,
+        id_card_masked=_text(d.get("idCardMasked"), "证件号", 32),
+        vip=vip, tags=_guest_tags(d.get("tags")) or [],
+        notes=_text(d.get("notes"), "备注", 500), stays=0, spend=0,
         created_at=date.today(),
     )
     db.add(g)
@@ -662,11 +802,14 @@ def update_guest(db, gid, d):
     if not g:
         raise ValueError("客人不存在")
     if d.get("vip") is not None:
-        g.vip = d["vip"]
+        vip = _text(d["vip"], "会员等级", 16)
+        if vip not in VIP_LEVELS:
+            raise ValueError("会员等级不存在")
+        g.vip = vip
     if d.get("tags") is not None:
-        g.tags = d["tags"]
+        g.tags = _guest_tags(d["tags"])
     if d.get("notes") is not None:
-        g.notes = d["notes"]
+        g.notes = _text(d["notes"], "备注", 500)
     db.commit()
     db.refresh(g)
     return _guest_out(g)

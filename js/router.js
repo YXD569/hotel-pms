@@ -20,6 +20,11 @@
     location.hash = '#/' + key;
   }
 
+  function roleName(role) {
+    var r = PMS.auth.ROLES[role];
+    return r ? r.name : (role || '未知角色');
+  }
+
   function render() {
     var app = U.qs('#app');
     var user = PMS.auth.current();
@@ -35,7 +40,7 @@
       app.innerHTML = '<div class="layout">' + sidebarHtml('') + mainHtml(
         '<div class="card card-pad" style="margin:40px auto;max-width:420px;text-align:center">' +
         '<p style="font-size:15px;font-weight:700;margin-bottom:8px">无权访问</p>' +
-        '<p style="font-size:13px;color:var(--ink-2)">当前角色（' + U.escapeHtml(PMS.auth.ROLES[user.role].name) +
+        '<p style="font-size:13px;color:var(--ink-2)">当前角色（' + U.escapeHtml(roleName(user.role)) +
         '）没有「' + U.escapeHtml(page.title) + '」的访问权限。</p></div>'
       );
       wireSidebar();
@@ -81,7 +86,7 @@
       '<div class="topbar-right">' +
       '<div class="user-chip"><div class="user-avatar">' + U.escapeHtml(user.name.slice(0, 1)) + '</div>' +
       '<div><div class="u-name">' + U.escapeHtml(user.name) + '</div>' +
-      '<div class="u-role">' + U.escapeHtml(PMS.auth.ROLES[user.role].name) + '</div></div></div>' +
+      '<div class="u-role">' + U.escapeHtml(roleName(user.role)) + '</div></div></div>' +
       '<button class="btn btn-ghost btn-sm" id="btnLogout">退出登录</button>' +
       '</div></header>' +
       '<div class="content">' + inner + '</div></div>';

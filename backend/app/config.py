@@ -8,6 +8,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
 
+# 演示数据种子与「新增员工未填密码」时使用的初始密码。
+# 集中一处，避免同一个密码散落在 seed.py / pms.py / README / 测试里各不相同。
+DEMO_PASSWORD = "123456"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(

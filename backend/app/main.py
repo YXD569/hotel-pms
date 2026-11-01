@@ -3,7 +3,9 @@
 - 托管前端静态文件（index.html / css / js / 截图 png），上线后单 URL 可用
 - 支持 `python app/main.py` 直接启动（VS Code 右上角「运行 Python 文件」按钮）
 """
+import logging
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,7 +19,8 @@ if __package__ in (None, ""):
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func
+from sqlalchemy import func, text
+from sqlalchemy.exc import OperationalError
 
 from app.config import settings
 from app.db import Base, SessionLocal, engine
@@ -26,19 +29,69 @@ from app.routers import (
     auth, state, bookings, reception, billing, rooms, housekeeping, settings as settings_router, guests,
 )
 
+# uvicorn 只配置自己的 logger，不碰 root；不装 handler 的话本模块的 logger.info
+# 会被 logging.lastResort（级别 WARNING）吞掉，启动横幅打不出来。
+# 已有 handler 时 basicConfig 是空操作，重复导入无副作用。
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(message)s")
+logger = logging.getLogger("pms")
+
+# 生产环境必须替换的默认密钥（仅提示，不阻断启动）
+DEFAULT_JWT_SECRETS = {"", "dev-secret-change-me", "dev-only-secret-please-change-in-production-32b"}
+
+
+def _wait_for_db(attempts: int = 10, delay: float = 1.5) -> None:
+    """启动前探测数据库连通性（容器编排下数据库常比应用晚就绪）。"""
+    for i in range(attempts):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return
+        except OperationalError:
+            if i == attempts - 1:
+                raise
+            logger.warning("数据库暂不可用，%.1fs 后重试（%d/%d）", delay, i + 1, attempts)
+            time.sleep(delay)
+
+
+def _startup_banner() -> None:
+    """打印「浏览器该开哪个地址」。
+
+    uvicorn 自己那行 "Uvicorn running on http://0.0.0.0:8000" 是**监听地址**，
+    0.0.0.0 不是可访问地址，浏览器打开会直接 ERR_ADDRESS_INVALID。
+    这里按实际启动参数换算成能点的地址，避免用户照抄第一行踩坑。
+    """
+    host, port = "127.0.0.1", "8000"
+    argv = sys.argv
+    for i, a in enumerate(argv):
+        if a.startswith("--port="):
+            port = a.split("=", 1)[1]
+        elif a == "--port" and i + 1 < len(argv):
+            port = argv[i + 1]
+        elif a.startswith("--host="):
+            host = a.split("=", 1)[1]
+        elif a == "--host" and i + 1 < len(argv):
+            host = argv[i + 1]
+    shown = "localhost" if host in ("0.0.0.0", "::", "") else host
+    logger.info("浏览器入口 → http://%s:%s  （请打开这个地址；0.0.0.0 只是监听地址，浏览器会拒绝）", shown, port)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动即建表；若 staff 表为空（首次部署 / 全新数据库），灌入演示数据
+    _wait_for_db()
+    if settings.jwt_secret in DEFAULT_JWT_SECRETS or len(settings.jwt_secret) < 32:
+        logger.warning("JWT_SECRET 仍是默认值或长度不足 32 字节，生产环境请务必替换")
+    # 启动即建表（已存在则跳过，不改动既有数据）
     Base.metadata.create_all(engine)
+    # 只有确认 staff 表确实为空才灌种子数据。
+    # 这里不做 try/except 兜底：曾经用「查询异常即视为空库」的写法，
+    # 只要启动瞬间数据库连接抖动一次，就会走 seed() 的 drop_all 把线上数据全删掉。
     with SessionLocal() as db:
-        try:
-            empty = db.query(func.count(Staff.id)).scalar() == 0
-        except Exception:
-            empty = True
+        empty = db.query(func.count(Staff.id)).scalar() == 0
     if empty:
         from app.seed import seed
+        logger.info("检测到空库，正在写入演示数据…")
         seed()
+    _startup_banner()
     yield
 
 

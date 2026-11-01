@@ -40,14 +40,63 @@
         });
       }
       return res.text().then(function (txt) {
-        var data = txt ? JSON.parse(txt) : null;
-        if (!res.ok) {
-          var m = data && data.detail ? data.detail : ('请求失败 (' + res.status + ')');
-          throw { message: m };
-        }
+        var data = null;
+        try { data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
+        if (!res.ok) throw { message: detailText(data, res.status) };
+        if (txt && data === null) throw { message: '服务器返回了非预期内容（HTTP ' + res.status + '）' };
         return data;
       });
+    }, function () {
+      // 第二个回调只接 fetch 本身的失败（后端没启动 / 断网 / 地址打开方式不对），
+      // 上面的业务错误不会落到这里，所以不会把「密码错误」误报成离线。
+      throw { message: '无法连接服务器。' + diagnose(), offline: true };
     });
+  }
+
+  /* 请求失败时给出「为什么会连不上」的具体判断，而不是一句干巴巴的提示。
+     file:// 双击、照抄 0.0.0.0、误用静态服务器，是本地开发 90% 的失败原因，逐条分辨。
+     不假设后端一定是 8000 端口 —— 用户完全可能用 --port 8001，
+     所以只把「已知的静态服务器端口」判为用错工具，其余本地端口一律按「服务没起」处理。
+     部署到线上（域名 + 80/443）时这些分支都不会命中，只落到最后一句通用提示。 */
+  function diagnose() {
+    var p = location.protocol;
+    var host = location.hostname;
+    var port = location.port;
+    var isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+    var STATIC_SERVERS = { '5500': 'VS Code Live Server', '5501': 'VS Code Live Server', '3000': '前端脚手架', '5173': 'Vite', '8080': '通用静态服务器' };
+
+    if (p === 'file:') {
+      return '当前是双击 index.html 用 file:// 打开的，浏览器不允许它请求后端接口。'
+        + '请在地址栏手动输入 http://localhost:8000 打开。';
+    }
+    if (host === '0.0.0.0') {
+      return '0.0.0.0 是后端「监听所有网卡」的地址，不是可访问地址，浏览器会直接拒绝（ERR_ADDRESS_INVALID）。'
+        + '请在地址栏输入 http://localhost:8000 或 http://127.0.0.1:8000。';
+    }
+    if (isLocalHost && STATIC_SERVERS[port]) {
+      return '当前是 ' + port + ' 端口（' + STATIC_SERVERS[port] + '）。本项目前端由后端同源托管，'
+        + '不需要单独的静态服务器。请关掉它，直接访问 http://localhost:8000。';
+    }
+    if (isLocalHost) {
+      return '本机 ' + (port || '80') + ' 端口没有响应，后端可能已停止。'
+        + '请回到终端确认有 "Uvicorn running on ..." 且端口与地址栏一致，没有就重新启动。';
+    }
+    return '无法连接服务器，请确认后端已启动（默认 http://localhost:8000）。';
+  }
+
+  /* 错误详情转可读文案：字符串直接用；FastAPI 的 422 校验错误是数组，需拼成一句中文提示 */
+  function detailText(data, status) {
+    var d = data && data.detail;
+    if (typeof d === 'string' && d) return d;
+    if (Array.isArray(d) && d.length) {
+      var parts = d.map(function (x) {
+        if (!x || !x.msg) return '';
+        var loc = Array.isArray(x.loc) ? x.loc[x.loc.length - 1] : '';
+        return (loc ? loc + ': ' : '') + x.msg;
+      }).filter(Boolean);
+      if (parts.length) return '参数不合法 — ' + parts.join('；');
+    }
+    return '请求失败（HTTP ' + status + '）';
   }
   function get(p) { return req('GET', p); }
   function post(p, b) { return req('POST', p, b); }
@@ -217,18 +266,22 @@
   function addPayment(folioId, amount, method, note) {
     return commit(post('/api/folios/' + folioId + '/pay', { amount: amount, method: method || '现金', note: note || '' }));
   }
-  // 页面按数组下标传入；服务端按条目 id 作废 —— 此处用缓存把下标翻译为 id
-  function voidExtra(folioId, idx) {
-    var f = folioById(folioId);
-    var it = f && f.extras[idx];
-    if (!it) return Promise.reject({ message: '账单条目不存在' });
-    return commit(post('/api/folios/' + folioId + '/void-extra/' + it.id));
+  // 服务端按条目 id 作废：页面直接传条目 id（或条目对象）。
+  // 注意不要按「数组下标」传 —— 下标依赖后端返回顺序（MySQL 无 ORDER BY 不保证），
+  // 一旦顺序变了就会作废到别的条目上。
+  function itemId(item) {
+    if (item && typeof item === 'object') return item.id;
+    return item;
   }
-  function voidPayment(folioId, idx) {
-    var f = folioById(folioId);
-    var it = f && f.payments[idx];
-    if (!it) return Promise.reject({ message: '账单条目不存在' });
-    return commit(post('/api/folios/' + folioId + '/void-payment/' + it.id));
+  function voidExtra(folioId, item) {
+    var id = itemId(item);
+    if (id == null) return Promise.reject({ message: '账单条目不存在' });
+    return commit(post('/api/folios/' + folioId + '/void-extra/' + id));
+  }
+  function voidPayment(folioId, item) {
+    var id = itemId(item);
+    if (id == null) return Promise.reject({ message: '账单条目不存在' });
+    return commit(post('/api/folios/' + folioId + '/void-payment/' + id));
   }
   function setInvoice(folioId, on) { return commit(post('/api/folios/' + folioId + '/invoice', { invoice: !!on })); }
 

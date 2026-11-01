@@ -198,7 +198,7 @@
       '<div class="row"><span class="k">订单</span><span class="v num">' + s.bookings.length + ' 单</span></div>' +
       '<div class="row"><span class="k">客人档案</span><span class="v num">' + s.guests.length + ' 位</span></div>' +
       '<div class="row"><span class="k">账单</span><span class="v num">' + s.folios.length + ' 张</span></div>' +
-      '<div class="row"><span class="k">数据存储</span><span class="v">后端 MySQL 数据库</span></div>' +
+      '<div class="row"><span class="k">数据存储</span><span class="v">后端数据库（本地 SQLite / 部署 MySQL）</span></div>' +
       '</div>' +
       (canManage
         ? '<div style="display:flex;gap:10px;margin-top:16px">' +
@@ -213,10 +213,10 @@
       '<div class="row"><span class="k">系统名称</span><span class="v">云澜 PMS · 酒店管理系统</span></div>' +
       '<div class="row"><span class="k">版本</span><span class="v num">v2.0.0（全栈版）</span></div>' +
       '<div class="row"><span class="k">架构</span><span class="v">原生前端 + FastAPI 后端</span></div>' +
-      '<div class="row"><span class="k">数据层</span><span class="v">FastAPI + MySQL（JWT 鉴权）</span></div>' +
+      '<div class="row"><span class="k">数据层</span><span class="v">FastAPI + SQLAlchemy（JWT 鉴权）</span></div>' +
       '<div class="row"><span class="k">权限模型</span><span class="v">RBAC · 5 角色 × 页面 + 动作双层（服务端 + 前端双重校验）</span></div>' +
       '</div>' +
-      '<div class="form-hint" style="margin-top:14px">本系统为全栈演示项目：前端对接 FastAPI 后端，数据持久化于 MySQL，所有写操作经服务端 RBAC 校验。</div>' +
+      '<div class="form-hint" style="margin-top:14px">本系统为全栈演示项目：前端对接 FastAPI 后端，数据持久化在后端数据库（本地默认 SQLite，部署可换 MySQL），所有写操作经服务端 RBAC 校验。</div>' +
       '</div>' +
       '</div>';
 

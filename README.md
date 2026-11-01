@@ -1,6 +1,6 @@
 # 云澜 PMS · 酒店管理系统
 
-面向酒店内部员工的单店 PMS（Property Management System）。**原生 HTML/CSS/JS 前端 + FastAPI 后端 + MySQL 的全栈项目**：后端以聚合状态快照 `GET /api/state` 驱动前端 9 个业务页面（页面层基本零改动对接真实数据库），JWT 鉴权 + RBAC 服务端校验；并以**单镜像同时托管前端静态资源**，部署后单 URL 即可使用。
+面向酒店内部员工的单店 PMS（Property Management System）。**原生 HTML/CSS/JS 前端 + FastAPI 后端的全栈项目**（本地默认 SQLite，零配置开箱即用；部署可一键切 MySQL）：后端以聚合状态快照 `GET /api/state` 驱动前端 9 个业务页面（页面层基本零改动对接真实数据库），JWT 鉴权 + RBAC 服务端校验；并以**单镜像同时托管前端静态资源**，部署后单 URL 即可使用。
 
 ## 系统截图
 1.店长
@@ -66,19 +66,31 @@ hotel-pms/
 │   │   └── seed.py          演示数据种子（36 间房 / 4 房型 / 员工 / 客人 / 预订 / 账务 / 任务 / 14 天趋势）
 │   ├── requirements.txt      fastapi / uvicorn / sqlalchemy / pymysql / pyjwt / bcrypt …
 │   ├── .env.example          环境变量示例（.env 已被忽略，不进仓库）
-│   └── test_api.py           后端 E2E 测试（41 条断言，FastAPI TestClient，可空库直接运行）
+│   └── test_api.py           后端 E2E 测试（54 条断言，FastAPI TestClient，可空库直接运行）
+├── .vscode/                  VS Code 一键运行配置
+│   ├── launch.json           F5：启动后端（可断点）/ 跑后端测试
+│   ├── tasks.json            Ctrl+Shift+B 热重载启动；环境初始化 / 跑测试任务
+│   ├── settings.json         固定解释器 + python.analysis.extraPaths（from app.* 不标红）
+│   └── extensions.json       推荐安装 Python 扩展
 ├── Dockerfile / railway.toml / .dockerignore   一键部署到 Railway（单镜像托管前后端）
 ├── e2e-test.js               前端 API 冒烟测试（Node，对“运行中的实例”做 HTTP 级校验）
+├── client-test.mjs           前端数据层单测（14 项，Node，无需后端，校验请求 URL 与错误文案）
+├── main-guard-test.mjs       启动自检单测（7 项，验证 file:// / 0.0.0.0 被拦、正常地址放行）
+├── front-tests.mjs           上面两个前端测试的串行入口（跨 PowerShell / Git Bash 都能跑）
 └── README.md
 ```
 
-> 前端对接机制：`js/api-client.js` 的对外签名与原 Mock API 完全一致，`getState()` 仍同步返回内存缓存（页面照旧同步读取）；所有写操作改为异步调用真实 REST 接口，成功后再 `refresh()` 拉取 `GET /api/state` 刷新缓存，页面重渲染即见新数据。因此 9 个页面业务逻辑基本零改动，仅替换数据层并做最小异步适配。
+> 前端对接机制：`js/api-client.js` 的对外签名与原 Mock API 完全一致，`getState()` 仍同步返回内存缓存（页面照旧同步读取）；所有写操作改为异步调用真实 REST 接口，成功后再 `refresh()` 拉取 `GET /api/state` 刷新缓存，页面重渲染即见新数据。
 
-## 本地运行（全栈）
+#### 在 VS Code 里跑测试
 
-### 推荐：启动后端（后端会一并托管前端）
+| 想跑什么 | 操作 |
+|---|---|
+| **后端 54 条断言**（空库可直接跑） | `Ctrl+Shift+P` → `Tasks: Run Task` → 「跑后端测试」；或 F5 选「后端测试 test_api.py」 |
+| **前端 API 冒烟（16 项，需服务已启动）** | `Tasks: Run Task` → 「跑前端 API 冒烟测试」（默认打 `http://127.0.0.1:8000`，需本机装有 Node 18+） |
+| **前端数据层单测（21 项，不起服务也行）** | `Tasks: Run Task` → 「跑前端数据层单测」（数据层 14 项 + 启动自检 7 项） |
 
-前置：**Python 3.11+**（已在 3.13.2 上验证；3.9 及以下跑不了，见下方排错）。本机无需安装数据库，默认用 SQLite 联调。
+### B. 命令行启动（后端会一并托管前端）
 
 **Windows · PowerShell（VS Code 默认终端）**
 
@@ -88,7 +100,7 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements-dev.txt
 Copy-Item .env.example .env -ErrorAction SilentlyContinue
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 **Windows · cmd**
@@ -98,7 +110,7 @@ cd C:\Users\叶晓栋\Desktop\hotel-pms\backend
 py -3.13 -m venv .venv
 .venv\Scripts\activate.bat
 python -m pip install -r requirements-dev.txt
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 **macOS / Linux**
@@ -108,77 +120,13 @@ cd hotel-pms/backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 打开浏览器访问 `http://localhost:8000` 即可（后端同时托管 `index.html` 与 `css/`、`js/`，**无需再开静态服务器 / Live Server**）。
 首次启动会自动 `CREATE TABLE` 并在数据库为空时灌入演示数据。
 
-> `requirements-dev.txt` = 运行依赖 + 测试依赖（`httpx2`）。只部署不测试时可用 `requirements.txt`。
-> 依赖已**锁定版本**，请勿改成 `>=`：starlette 1.10 起 TestClient 改用 `httpx2`，不锁版本重建环境会直接起不来。
-
-### 在 VS Code 里运行
-
-**先做一次：右下角选解释器** → `backend\.venv\Scripts\python.exe`（应显示 Python 3.13.x）。
-也可以 `Ctrl+Shift+P` → `Python: Select Interpreter` → 选带 `.venv` 的那个。
-
-然后任选一种（三种方式都已实测通过）：
-
-| 操作 | 效果 |
-|---|---|
-| 打开 `backend/app/main.py`，点右上角 **▷ 运行 Python 文件** | 直接启动后端，最省事（文件内已处理 `sys.path`，不会再报 `No module named 'app'`） |
-| **F5** → 选「PMS 后端（8000，可断点）」 | 启动并支持断点调试（工作目录自动设为 `backend`） |
-| `Ctrl+Shift+B` → 选「启动后端（热重载）」 | 改代码自动重启，适合调前端联调 |
-| **F5** → 选「后端测试 test_api.py」 | 断点调试 41 条断言 |
-
-启动后终端出现 `Uvicorn running on http://0.0.0.0:8000`，浏览器开 `http://localhost:8000`。
-停止服务：终端里 `Ctrl+C`，或点 VS Code 调试工具栏的红色方块。
-
-`.vscode/settings.json` 已固定解释器并配置 `python.analysis.extraPaths`，`from app.*` 不会标红。
-
-> 注意：工作区请打开 **`hotel-pms` 根目录**，不要只打开 `backend`，否则 `.vscode/` 配置不生效。
-
-### 排错：在 VS Code 里起不来
-
-| 报错关键词 | 原因 | 处理 |
-|---|---|---|
-| `ModuleNotFoundError: No module named 'app'` | 用旧方式直接跑了 `app/main.py`（脚本模式下 `sys.path[0]` 是 `app/`） | 已在本版修复；若仍出现，确认拉的是最新代码 |
-| `TypeError: unsupported operand type(s) for \|: 'type' and 'NoneType'`<br>`dataclass() got an unexpected keyword argument 'slots'` | `.venv` 的解释器与包版本不匹配（如 venv 被 3.9 接管，但装的是 3.13 的轮子） | 删掉 `.venv` 重建：`py -3.13 -m venv .venv` 再装依赖 |
-| `RuntimeError: ... requires the httpx2 package` | 只装了 `requirements.txt`，缺测试依赖 | `pip install -r requirements-dev.txt` |
-| `无法加载文件 ...Activate.ps1，因为在此系统上禁止运行脚本` | PowerShell 执行策略限制 | 当前窗口临时放开：`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`；或改用 cmd 的 `activate.bat` |
-| `Could not import module "app.main"` | 当前目录不是 `backend`（`app` 包不在路径里） | `cd backend` 后再启动，或用仓库自带任务 / F5 |
-| `ModuleNotFoundError: No module named 'uvicorn'` | 没激活虚拟环境，用的是全局 Python | 先激活，或直接用 `.venv\Scripts\python.exe -m uvicorn ...` |
-| 终端里 `python` 版本是 3.9 | 选错了解释器 | `Ctrl+Shift+P` → `Python: Select Interpreter` 改回 `.venv` |
-| `[Errno 10048] address already in use` | 8000 端口被占用（常见于上次的服务没停） | 换端口 `--port 8001`，或 `netstat -ano \| findstr :8000` 后结束进程 |
-| 浏览器能开但页面空白 | 后端没起来（前端必须连后端） | 确认 `http://localhost:8000/api/health` 返回 `{"status":"ok",...}` |
-
-> 若本地有 MySQL：把 `.env` 的 `DATABASE_URL` 改为 `mysql+pymysql://user:pass@localhost:3306/hotel_pms?charset=utf8mb4` 即可。
-
-### 仅预览前端（无后端）
-
-本版本前端只保留对接后端的数据层（`js/api-client.js`），页面启动即调用 `GET /api/state`，**必须配合后端运行**。
-若只想要"纯前端 + localStorage 演示版"，可从 git 历史（提交 `b06f965`）取回当时的 `js/mock/` 与 `js/store.js` 方案（不在本次全栈改造范围内）。
-
-## 后端 API 测试
-
-```powershell
-cd C:\Users\叶晓栋\Desktop\hotel-pms\backend
-.\.venv\Scripts\Activate.ps1
-python test_api.py
-# 或绕开激活：.\.venv\Scripts\python.exe test_api.py
-# 覆盖：health / 登录(正确·错误·无 token) / state 脱敏 / 房态数 / 创建预订 / 满房与日期校验 /
-# 入住→退房(computed 含 total/balance) / 重复退房拦截 / 清洁任务联动 / 脏房入住拦截 /
-# 押金富余退款口径 / 超时未到 / 条目作废类型校验 / 可售量扣除停用房 / 员工工号递增 / RBAC 越权 403
-# —— 41 条断言，空库可直接运行（内部用 TestClient 上下文触发 lifespan 建表+种子）
-```
-
-## 前端 API 冒烟测试（Node，可选）
-
-```bash
-# 先按“本地运行”启动后端（或部署到 Railway 后用其域名）
-node e2e-test.js                               # 默认 http://localhost:8000
-BASE_URL=https://你的 railway 域名  node e2e-test.js
-```
+> 若本地有 MySQL：把 `.env` 的 `DATABASE_URL` 改为 `mysql+pymysql://user:pass@localhost:3306/hotel_pms?charset=utf8mb4` 即可（表结构与 SQLite 一致，首次启动自动建表）。
 
 ## 部署到 Railway（全栈单镜像）
 
@@ -212,15 +160,22 @@ BASE_URL=https://你的 railway 域名  node e2e-test.js
 |---|---|
 | 可售库存 | 房量按「房型房间数 − 停用（OO）房 − 该日期段已占用」计算，前端弹窗与后端校验同口径 |
 | 空脏房 | `VD` 房不可直接办理入住，必须先完成清洁任务（前端候选列表已过滤，后端二次拦截） |
+| 在住房 | `OC` 房不可再被入住（防止脏数据把两位客人安排进同一间） |
+| 提前入住 | 预抵日期在未来的订单**不能**办理入住（否则房间被提前占成在住，房态与经营数据全部错位）；超时未到的订单仍可正常入住 |
 | 停用房 | 在住（OC）或当日有预抵/在住订单的房间不可停用，避免客人到店无房 |
-| 退款口径 | 退房时押金富余以**负数收款**入账（`refund=true`），保证「已收合计」不被退款金额虚增、结账后余额为 0 |
+| 退款口径 | 退房时押金富余以**负数收款**入账（`refund=true`），保证「已收合计」不被退款金额虚增、结账后余额为 0；退房接口返回的 `computed` 是**结算后**口径（补收/退款已计入） |
 | 未到店 | 预抵当天及之后均可标记未到店（超时未到仍在「今日预抵」列表里以红底提示）；未来预抵不可提前标记 |
-| 账单修改 | 已结账账单不可再加项/收款/作废条目；作废接口按条目类型校验（消费项与收款不可互串） |
-| 订单编辑 | 待入住订单可修改；若入住日期已是过去（超时未到），允许保留原日期修改其他字段 |
+| 账单修改 | 已结账账单不可再加项/收款/作废条目；作废接口按条目类型校验（消费项与收款不可互串），且按**条目 id** 定位，不依赖返回顺序 |
+| 订单编辑 | 待入住订单可修改（含房价、押金、排房、备注）；若入住日期已是过去（超时未到），允许保留原日期修改其他字段 |
+| 金额边界 | 单笔金额 1 ~ 9,999,999 元、数量 1 ~ 99；超范围返回 400 而不是把数据库打成 500 |
+| 枚举校验 | 任务类型（cleaning/maintenance）、任务状态（pending/doing/done）、员工角色（5 种）、渠道来源、会员等级、房型代码、房间号必须在合法集合内，否则 400 |
+| 字段长度 | 姓名 ≤ 64、手机号 ≤ 32、备注 ≤ 500、账单条目名 ≤ 128 字符；超长直接 400（SQLite 不校验长度，换 MySQL 严格模式会直接报错） |
 
 ## 已知边界
 
 - 已具备真实后端：密码 bcrypt 哈希存储、JWT 鉴权、RBAC 服务端校验；登录即真实身份，非角色切换演示。
+- 本地默认 SQLite（零配置）；换 MySQL 只需改 `DATABASE_URL`，不需要改代码。
 - 报表的 14 天趋势为种子历史数据；实时数据（订单/账务/房态）由数据库实时计算。
 - 团队订单、夜审、多币种、分店多物业等企业级深度功能未展开，模块结构已预留扩展位。
 - 演示数据含固定账号（manager / front / housekeeping / finance / admin，密码 `123456`），生产请重置员工账户并更换 `JWT_SECRET`。
+- `GET /api/state` 是一次性全量快照（含在住客人手机号），酒店内网单店场景够用；要做多店/外网暴露，应改为按模块分页拉取并做字段级脱敏。

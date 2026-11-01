@@ -9,6 +9,7 @@
 import bcrypt
 from datetime import date, timedelta
 
+from app.config import DEMO_PASSWORD
 from app.db import Base, SessionLocal, engine
 from app.models import (
     Booking,
@@ -88,7 +89,7 @@ def seed():
             db.add(RoomType(**t))
 
         # ----- 员工（密码统一 123456）-----
-        pw_hash = bcrypt.hashpw(b"123456", bcrypt.gensalt()).decode()
+        pw_hash = bcrypt.hashpw(DEMO_PASSWORD.encode(), bcrypt.gensalt()).decode()
         for sid, name, account, role, phone, status in STAFF:
             db.add(Staff(id=sid, name=name, account=account, password_hash=pw_hash,
                          role=role, phone=phone, status=status))

@@ -89,16 +89,16 @@
     function bodyHtml(f) {
       var b = api.bookingById(f.bookingId);
       var c = api.folioComputed(f);
-      var extrasRows = f.extras.length ? f.extras.map(function (e, i) {
-        return '<tr><td>' + U.escapeHtml(e.name) + '</td><td>' + e.category + '</td><td class="num">×' + e.qty + '</td>' +
+      var extrasRows = f.extras.length ? f.extras.map(function (e) {
+        return '<tr><td>' + U.escapeHtml(e.name) + '</td><td>' + U.escapeHtml(e.category || '') + '</td><td class="num">×' + e.qty + '</td>' +
           '<td class="num">' + U.fmtMoney(e.amount * e.qty) + '</td><td>' + (e.voided ? PMS.ui.badge('已作废', 'bg-grey') : '') + '</td>' +
-          (can('billing.void') && f.status === 'open' && !e.voided ? '<td><button class="btn-link danger" data-void-ex="' + i + '">作废</button></td>' : '') +
+          (can('billing.void') && f.status === 'open' && !e.voided ? '<td><button class="btn-link danger" data-void-ex="' + e.id + '">作废</button></td>' : '') +
           '</tr>';
       }).join('') : '<tr><td colspan="6" style="color:var(--ink-3)">无杂项消费</td></tr>';
-      var payRows = f.payments.length ? f.payments.map(function (p, i) {
-        return '<tr><td>' + (p.refund ? '押金退还' : (p.note || '收款')) + '</td><td>' + p.method + '</td>' +
+      var payRows = f.payments.length ? f.payments.map(function (p) {
+        return '<tr><td>' + (p.refund ? '押金退还' : U.escapeHtml(p.note || '收款')) + '</td><td>' + U.escapeHtml(p.method || '') + '</td>' +
           '<td class="num">' + U.fmtMoney(p.amount) + '</td><td class="num">' + p.time + '</td>' +
-          (can('billing.void') && !p.voided && f.status === 'open' && !p.refund ? '<td><button class="btn-link danger" data-void-pay="' + i + '">作废</button></td>' : '') +
+          (can('billing.void') && !p.voided && f.status === 'open' && !p.refund ? '<td><button class="btn-link danger" data-void-pay="' + p.id + '">作废</button></td>' : '') +
           '</tr>';
       }).join('') : '<tr><td colspan="5" style="color:var(--ink-3)">无收款记录</td></tr>';
 
@@ -140,10 +140,10 @@
 
     U.qsa('[data-void-ex]', d.el).forEach(function (btn) {
       btn.addEventListener('click', function () {
-        var i = Number(btn.getAttribute('data-void-ex'));
+        var itemId = Number(btn.getAttribute('data-void-ex'));
         PMS.ui.confirmDialog('确定作废该消费条目吗？作废后不计入应收。', { danger: true, confirmText: '确认作废' }).then(function (yes) {
           if (!yes) return;
-          api.voidExtra(f.id, i).then(function () {
+          api.voidExtra(f.id, itemId).then(function () {
             PMS.ui.toast('条目已作废');
             d.close(); done();
           }).catch(function (e) { PMS.ui.toast(e.message, 'err'); });
@@ -152,10 +152,10 @@
     });
     U.qsa('[data-void-pay]', d.el).forEach(function (btn) {
       btn.addEventListener('click', function () {
-        var i = Number(btn.getAttribute('data-void-pay'));
+        var itemId = Number(btn.getAttribute('data-void-pay'));
         PMS.ui.confirmDialog('确定作废该笔收款吗？作废后需重新收款。', { danger: true, confirmText: '确认作废' }).then(function (yes) {
           if (!yes) return;
-          api.voidPayment(f.id, i).then(function () {
+          api.voidPayment(f.id, itemId).then(function () {
             PMS.ui.toast('收款已作废');
             d.close(); done();
           }).catch(function (e) { PMS.ui.toast(e.message, 'err'); });
