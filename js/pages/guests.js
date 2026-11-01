@@ -124,14 +124,14 @@
         { text: '取 消', cls: 'btn-ghost', onClick: function (close) { close(); } },
         { text: '保存', cls: 'btn-primary', onClick: function (close, btn) {
           btn.disabled = true;
-          g.vip = U.qs('#egVip').value;
-          g.tags = U.qs('#egTags').value.split(/[,，]/).map(function (t) { return t.trim(); }).filter(Boolean);
-          g.notes = U.qs('#egNotes').value.trim();
-          PMS.api.persist();
-          setTimeout(function () {
+          PMS.api.updateGuest(g.id, {
+            vip: U.qs('#egVip').value,
+            tags: U.qs('#egTags').value.split(/[,，]/).map(function (t) { return t.trim(); }).filter(Boolean),
+            notes: U.qs('#egNotes').value.trim()
+          }).then(function () {
             PMS.ui.toast('档案已更新');
             close(); done();
-          }, 200);
+          }).catch(function (e) { PMS.ui.toast(e.message, 'err'); btn.disabled = false; });
         } }
       ]
     });

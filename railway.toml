@@ -1,0 +1,14 @@
+# Railway 部署配置（云澜 PMS 全栈）
+# 仓库根已有 Dockerfile，Railway 会自动使用；本文件只声明部署行为。
+
+[build]
+# 指定 Dockerfile 路径（相对仓库根）
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# 健康检查：后端启动后会自动建表 + 灌演示数据，就绪后即可通过
+healthcheckPath = "/api/health"
+healthcheckTimeout = 120
+# 失败自动重启（首次部署若建表较慢可多给几次重试）
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10

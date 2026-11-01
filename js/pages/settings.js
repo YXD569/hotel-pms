@@ -189,8 +189,6 @@
   function renderData() {
     var s = PMS.api.getState();
     var canManage = PMS.auth.can('settings.manage');
-    var size = 0;
-    try { size = (localStorage.getItem(PMS.store.KEY) || '').length; } catch (e) { size = 0; }
     U.qs('#setBody').innerHTML =
       '<div class="grid grid-2">' +
       '<div class="card card-pad">' +
@@ -200,7 +198,7 @@
       '<div class="row"><span class="k">订单</span><span class="v num">' + s.bookings.length + ' 单</span></div>' +
       '<div class="row"><span class="k">客人档案</span><span class="v num">' + s.guests.length + ' 位</span></div>' +
       '<div class="row"><span class="k">账单</span><span class="v num">' + s.folios.length + ' 张</span></div>' +
-      '<div class="row"><span class="k">本地存储占用</span><span class="v num">' + (size / 1024).toFixed(1) + ' KB</span></div>' +
+      '<div class="row"><span class="k">数据存储</span><span class="v">后端 MySQL 数据库</span></div>' +
       '</div>' +
       (canManage
         ? '<div style="display:flex;gap:10px;margin-top:16px">' +
@@ -213,12 +211,12 @@
       '<div class="card-title">关于系统</div>' +
       '<div class="info-list">' +
       '<div class="row"><span class="k">系统名称</span><span class="v">云澜 PMS · 酒店管理系统</span></div>' +
-      '<div class="row"><span class="k">版本</span><span class="v num">v1.0.0（前端演示版）</span></div>' +
-      '<div class="row"><span class="k">架构</span><span class="v">零构建 · 原生 HTML/CSS/JS</span></div>' +
-      '<div class="row"><span class="k">数据层</span><span class="v">localStorage 持久化 Mock API</span></div>' +
-      '<div class="row"><span class="k">权限模型</span><span class="v">RBAC · 5 角色 × 页面 + 动作双层</span></div>' +
+      '<div class="row"><span class="k">版本</span><span class="v num">v2.0.0（全栈版）</span></div>' +
+      '<div class="row"><span class="k">架构</span><span class="v">原生前端 + FastAPI 后端</span></div>' +
+      '<div class="row"><span class="k">数据层</span><span class="v">FastAPI + MySQL（JWT 鉴权）</span></div>' +
+      '<div class="row"><span class="k">权限模型</span><span class="v">RBAC · 5 角色 × 页面 + 动作双层（服务端 + 前端双重校验）</span></div>' +
       '</div>' +
-      '<div class="form-hint" style="margin-top:14px">本系统为前端演示项目，不含真实后端。替换 js/mock/api.js 为真实 HTTP 调用即可接入生产接口。</div>' +
+      '<div class="form-hint" style="margin-top:14px">本系统为全栈演示项目：前端对接 FastAPI 后端，数据持久化于 MySQL，所有写操作经服务端 RBAC 校验。</div>' +
       '</div>' +
       '</div>';
 
@@ -241,9 +239,10 @@
       PMS.ui.confirmDialog('确定<b style="color:var(--danger)">重置全部演示数据</b>吗？<br>当前所有订单、账单与客人档案的修改都会丢失，且不可恢复。', { danger: true, confirmText: '确认重置' })
         .then(function (yes) {
           if (!yes) return;
-          PMS.api.resetData();
-          PMS.ui.toast('演示数据已重置');
-          render(U.qs('#pageHost'));
+          PMS.api.resetData().then(function () {
+            PMS.ui.toast('演示数据已重置');
+            render(U.qs('#pageHost'));
+          }).catch(function (e) { PMS.ui.toast(e.message, 'err'); });
         });
     });
   }

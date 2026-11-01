@@ -13,12 +13,10 @@
   <div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
   <noscript>本系统需要启用 JavaScript 才能运行。</noscript>
 
-  <!-- 依赖顺序：工具 → 数据 → 服务 → 框架 → 页面 → 启动 -->
+  <!-- 依赖顺序：工具 → 鉴权 → 数据(API客户端, 对接后端) → 框架 → 页面 → 启动 -->
   <script src="js/utils.js"></script>
-  <script src="js/mock/seed.js"></script>
-  <script src="js/store.js"></script>
-  <script src="js/mock/api.js"></script>
   <script src="js/auth.js"></script>
+  <script src="js/api-client.js"></script>
   <script src="js/components.js"></script>
   <script src="js/router.js"></script>
   <script src="js/pages/login.js"></script>

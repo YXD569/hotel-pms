@@ -1,0 +1,14 @@
+# 不进入镜像的文件（减小体积 + 避免泄露密钥/本地数据）
+backend/.venv/
+backend/venv/
+backend/.env
+backend/*.db
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+.gitignore
+*.dump.html
+_shots/
+# 截图仅用于 GitHub README 展示，无需进运行镜像
+*.png

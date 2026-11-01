@@ -1,136 +1,118 @@
-/* 云澜 PMS · 业务流端到端测试（Node 环境，stub localStorage） */
+/* 云澜 PMS · 真实 API 端到端冒烟测试（Node，无需 Python）
+ *
+ * 说明：原 e2e-test.js 测试的是已被移除的本地 Mock 层（js/mock/api.js）。
+ * 全栈改造后，业务流由 FastAPI 后端承载，完整的生命周期测试见 backend/test_api.py（Python）。
+ * 本脚本用浏览器内置 fetch（Node 18+）对【正在运行的服务器】做 HTTP 级冒烟，
+ * 可针对本地（uvicorn）或云端（Railway 域名）实例执行，无需安装任何依赖。
+ *
+ * 用法：
+ *   node e2e-test.js                      # 默认 http://localhost:8000
+ *   BASE_URL=https://你的 railway 域名     node e2e-test.js
+ *
+ * 前置：先启动后端（uvicorn app.main:app --port 8000）或部署到 Railway。
+ */
+
 'use strict';
-global.window = global;
-global.localStorage = {
-  _d: {},
-  getItem: function (k) { return this._d[k] || null; },
-  setItem: function (k, v) { this._d[k] = String(v); },
-  removeItem: function (k) { delete this._d[k]; }
-};
 
-require('./js/utils.js');
-require('./js/mock/seed.js');
-require('./js/store.js');
-require('./js/mock/api.js');
+const BASE = process.env.BASE_URL || 'http://localhost:8000';
 
-var U = PMS.utils, api = PMS.api;
-var passed = 0, failed = 0;
-function assert(cond, msg) {
-  if (cond) { passed++; console.log('  ✓ ' + msg); }
-  else { failed++; console.error('  ✗ FAIL: ' + msg); }
+let pass = 0, fail = 0;
+const fails = [];
+function check(name, ok, extra) {
+  if (ok) { pass++; console.log('  ✓ ' + name); }
+  else { fail++; fails.push(name); console.log('  ✗ ' + name + (extra ? '  -> ' + extra : '')); }
 }
 
-function run() {
-  api.init();
-  var s = api.getState();
-  var T = U.today();
-
-  console.log('【种子数据】');
-  assert(s.rooms.length === 36, '房间数 = 36，实际 ' + s.rooms.length);
-  assert(s.bookings.filter(function (b) { return b.status === 'checkedin'; }).length === 5, '在住订单 = 5');
-  assert(s.bookings.filter(function (b) { return b.status === 'confirmed'; }).length === 10, '待入住订单 = 10（今日6+未来4）');
-  assert(s.folios.filter(function (f) { return f.status === 'open'; }).length === 5, '未结账单 = 5');
-
-  console.log('【创建预订】');
-  var created = null;
-  return api.createBooking({
-    guestName: '测试客人', phone: '13900001111', typeCode: 'STD_S',
-    source: 'direct', arrive: T, depart: U.addDays(T, 2), price: 328, deposit: 0, roomNo: null, memo: 'e2e'
-  }).then(function (b) {
-    created = b;
-    assert(b && b.status === 'confirmed' && b.nights === 2, '创建成功，2 晚，状态待入住');
-    return api.createBooking({
-      guestName: '满房测试', phone: '13900002222', typeCode: 'STD_S',
-      source: 'walkin', arrive: T, depart: U.addDays(T, 1), price: 328, roomNo: null
-    });
-  }).then(function () {
-    assert(false, '不应创建成功');
-  }, function (e) {
-    assert(/已满房|不可用/.test(e.message), '满房校验生效：' + e.message);
-    return api.createBooking({
-      guestName: '日期测试', phone: '13900003333', typeCode: 'STD_S',
-      source: 'walkin', arrive: U.addDays(T, -1), depart: T, price: 100
-    });
-  }).then(function () {
-    assert(false, '不应创建成功');
-  }, function (e) {
-    assert(/早于今天/.test(e.message), '过去日期校验生效：' + e.message);
-
-    console.log('【排房 → 入住】');
-    return api.freeRooms('STD_S', T, U.addDays(T, 2), created.id);
-  }).then(function (free) {
-    assert(free.length > 0, '有空闲房间 ' + free.length + ' 间');
-    return api.assignRoom(created.id, free[0].no);
-  }).then(function (b) {
-    assert(b.roomNo && b.roomNo.length === 4, '已排房 ' + b.roomNo);
-    return api.checkIn(created.id, b.roomNo, 500, '微信');
-  }).then(function (b) {
-    assert(b.status === 'checkedin', '入住成功');
-    var room = api.roomByNo(b.roomNo);
-    assert(room.status === 'OC' && room.bookingId === b.id, '房间状态转在住');
-    var f = api.folioOfBooking(b.id);
-    assert(f && f.status === 'open' && f.payments.length === 1 && f.payments[0].amount === 500, '账单开立，押金 500 入已收');
-    var g = PMS.api.getState().guests.filter(function (x) { return x.phone === '13900001111'; })[0];
-    assert(g && g.stays === 1, '新客人档案自动建立（新客 stays=1）');
-    return api.addExtra(f.id, { name: '迷你吧·啤酒', category: '杂项', qty: 2, amount: 25 });
-  }).then(function (f) {
-    assert(f.extras.length === 1 && f.extras[0].amount === 25, '杂项入账成功');
-
-    console.log('【退房结账】');
-    var f = api.folioOfBooking(created.id);
-    var c = api.folioComputed(f);
-    assert(c.roomFee === 656, '房费 = 2 × 328 = 656，实际 ' + c.roomFee);
-    assert(c.extrasTotal === 50, '杂项 = 50，实际 ' + c.extrasTotal);
-    assert(c.total === 706 && c.balance === 206, '应收 706，需补收 206，实际 balance=' + c.balance);
-    return api.checkOut(created.id, '现金');
-  }).then(function (res) {
-    assert(res.folio.status === 'settled' && res.computed.balance === 0, '账单结清，余额归零');
-    var room = api.roomByNo(res.booking.roomNo);
-    assert(room.status === 'VD' && !room.bookingId, '房间转空脏并释放');
-    var tk = PMS.api.getState().tasks.filter(function (t) { return t.roomNo === room.no && t.status === 'pending' && t.note === '退房清洁'; })[0];
-    assert(!!tk, '自动生成退房清洁任务');
-    var g = PMS.api.getState().guests.filter(function (x) { return x.phone === '13900001111'; })[0];
-    assert(g.spend === 706, '客人累计消费 706，实际 ' + g.spend);
-    return api.checkOut(created.id, '现金');
-  }).then(function () {
-    assert(false, '重复退房应失败');
-  }, function (e) {
-    assert(/状态不允许/.test(e.message), '重复退房被拦截：' + e.message);
-
-    console.log('【客房任务与停用】');
-    var vd = PMS.api.getState().rooms.filter(function (r) { return r.status === 'VD'; })[0];
-    var tk = PMS.api.getState().tasks.filter(function (t) { return t.roomNo === vd.no && t.status !== 'done'; })[0];
-    return api.updateTask(tk.id, { status: 'done' });
-  }).then(function (t) {
-    assert(t.status === 'done' && t.doneAt, '任务完成并记录时间');
-    return api.setRoomOO('0204', '测试停用');
-  }).then(function (r) {
-    assert(r.status === 'OO', '房间停用成功');
-    return api.setRoomOO('0207', '在住停用测试');
-  }).then(function () {
-    assert(false, '在住房间停用应失败');
-  }, function (e) {
-    assert(/在住/.test(e.message), '在住房间停用被拦截：' + e.message);
-    return api.restoreRoom('0204');
-  }).then(function (r) {
-    assert(r.status === 'VD', '停用恢复转空脏');
-
-    console.log('【账务作废权限相关逻辑】');
-    var f = api.getState().folios.filter(function (x) { return x.status === 'open'; })[0];
-    var beforeExtras = api.folioComputed(f).extrasTotal;
-    return api.addExtra(f.id, { name: '测试项', category: '杂项', qty: 1, amount: 10 }).then(function (f2) {
-      assert(api.folioComputed(f2).extrasTotal === beforeExtras + 10, '入账后杂项 +10');
-      var idx = f2.extras.length - 1;
-      return api.voidExtra(f2.id, idx);
-    }).then(function (f3) {
-      assert(api.folioComputed(f3).extrasTotal === beforeExtras, '作废后杂项恢复原值（不计入应收）');
-      console.log('\n结果：' + passed + ' 通过，' + failed + ' 失败');
-      process.exit(failed ? 1 : 0);
-    });
-  }).catch(function (e) {
-    console.error('测试异常中断：', e.message || e);
-    process.exit(1);
+async function req(method, path, body, token) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const res = await fetch(BASE + path, {
+    method,
+    headers,
+    body: body == null ? undefined : JSON.stringify(body),
   });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = text; }
+  return { status: res.status, data };
 }
 
-run();
+async function main() {
+  console.log('== 云澜 PMS · API 冒烟测试 ==');
+  console.log('BASE_URL = ' + BASE + '\n');
+
+  // 1) 健康检查（无需鉴权）
+  let r = await req('GET', '/api/health');
+  check('health 200', r.status === 200, JSON.stringify(r.data));
+  check('health 返回 ok', r.data && r.data.status === 'ok');
+
+  // 2) 错误密码 -> 401
+  r = await req('POST', '/api/auth/login', { account: 'manager', password: 'wrong' });
+  check('错误密码 401', r.status === 401, 'status=' + r.status);
+
+  // 3) 无 token 访问 state -> 401
+  r = await req('GET', '/api/state');
+  check('无 token -> 401', r.status === 401, 'status=' + r.status);
+
+  // 4) 正确登录 -> 拿到 token
+  r = await req('POST', '/api/auth/login', { account: 'manager', password: '123456' });
+  check('manager 登录 200', r.status === 200, 'status=' + r.status);
+  const token = r.data && r.data.access_token;
+  check('返回 access_token', !!token);
+  if (!token) { console.log('\n❌ 无法获取 token，后续依赖鉴权的用例跳过'); return finish(); }
+
+  // 5) 带 token 拉取聚合状态
+  r = await req('GET', '/api/state', null, token);
+  check('state 200', r.status === 200, 'status=' + r.status);
+  const st = r.data || {};
+  check('房态 >= 30 间', Array.isArray(st.rooms) && st.rooms.length >= 30, 'rooms=' + (st.rooms || []).length);
+  check('员工脱敏(无 password)', Array.isArray(st.staff) && st.staff.every(s => !('password' in s)), '');
+  check('dailyStats 14 天', Array.isArray(st.dailyStats) && st.dailyStats.length === 14, 'len=' + (st.dailyStats || []).length);
+  check('账单含 extras/payments', Array.isArray(st.folios) && st.folios.every(f => Array.isArray(f.extras) && Array.isArray(f.payments)));
+
+  // 6) 创建预订（后端做满房/日期校验）。
+  // 注意：直接取本地年/月/日拼接，避免 toISOString() 在 UTC+8 下把日期往前滚一天导致“过期”。
+  // 选 +120 天，远离种子预订（均落在今天附近），确保有空房。
+  const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const arrive = new Date(); arrive.setDate(arrive.getDate() + 120);
+  const depart = new Date(arrive); depart.setDate(depart.getDate() + 1);
+  r = await req('POST', '/api/bookings', {
+    guestName: '冒烟测试客', phone: '13800000000', typeCode: 'STD_D',
+    source: 'walkin', arrive: iso(arrive), depart: iso(depart), price: 288, deposit: 0,
+  }, token);
+  check('创建预订 200', r.status === 200, 'status=' + r.status);
+  check('预订状态 confirmed', r.data && r.data.status === 'confirmed');
+
+  // 7) 过期日期预订 -> 400
+  r = await req('POST', '/api/bookings', {
+    guestName: '过期客', phone: '13800000001', typeCode: 'STD',
+    source: 'walkin', arrive: '2020-01-01', depart: '2020-01-02', price: 288, deposit: 0,
+  }, token);
+  check('过期日期预订 400', r.status === 400, 'status=' + r.status);
+
+  // 8) RBAC：前台越权 reset -> 403（需前台 token）
+  let fr = await req('POST', '/api/auth/login', { account: 'front', password: '123456' });
+  const frontToken = fr.data && fr.data.access_token;
+  if (frontToken) {
+    r = await req('POST', '/api/reset', null, frontToken);
+    check('front 越权 reset -> 403', r.status === 403, 'status=' + r.status);
+  } else {
+    check('front 登录取 token', false);
+  }
+
+  // 9) 店长 reset -> 200（重置回演示数据）
+  r = await req('POST', '/api/reset', null, token);
+  check('manager reset 200', r.status === 200, 'status=' + r.status);
+
+  finish();
+}
+
+function finish() {
+  console.log('\n== 结果 ==');
+  console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');
+  if (fail) { console.log('失败项：' + fails.join(' / ')); console.log('\n❌ 冒烟测试未全部通过'); process.exit(1); }
+  console.log('\n✅ API 冒烟测试全部通过');
+  process.exit(0);
+}
+
+main().catch(e => { console.error('运行异常：', e); process.exit(1); });

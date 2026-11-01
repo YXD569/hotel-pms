@@ -7,3 +7,14 @@ _shots/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ===== Python / 后端 =====
+backend/.venv/
+backend/venv/
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+backend/.env
+# 本地 SQLite 联调库（不进仓库，部署用 Railway MySQL）
+backend/*.db
+*.db
